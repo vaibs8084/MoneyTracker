@@ -15,7 +15,8 @@ Current stack:
 - Android Studio
 - Local-first architecture
 
-The application will eventually connect to a backend and Google Sheets.
+The app is currently local-first. Backend and Google Sheets synchronization are
+not implemented.
 
 ## IMPORTANT DATA SAFETY RULES
 
@@ -96,6 +97,38 @@ Examples:
 
 ExternalOut must NOT be counted as personal expenses.
 
+## CURRENT IMPLEMENTATION
+
+### Architecture
+
+- The UI is built with Jetpack Compose and Material 3.
+- `MainActivity` hosts the Compose navigation and screens.
+- `MainViewModel` exposes Room-backed `StateFlow` UI state and performs writes
+  in `viewModelScope`.
+- `MoneyRepository` coordinates the DAOs, including transaction/tag and
+  categorization-rule/tag cross-reference writes.
+- Room is provided by the singleton `MoneyTrackerDatabase`.
+- `FinancialEngine` is the canonical balance-sheet calculator. It runs database
+  balance calculations on `Dispatchers.IO` and accounts for active and
+  deactivated accounts when calculating personal net worth.
+- Default Kotak and Cash accounts, plus default categories, are ensured during
+  app startup without removing existing data.
+
+### Available functionality
+
+The app currently supports:
+
+- Local Room storage, transaction history, transaction details, editing, and deletion
+- Income, Expense, Transfer, ExternalIn, and ExternalOut transactions
+- Optional external-money classifications: held money, receivable, and liability
+- Account creation, editing, deactivation, details, physical balances, and transfers
+- Category and tag management; transactions can have multiple tags
+- Subscription management and confirmed subscription tracking
+- Budget management
+- Goal management, including optional linked accounts and manual progress
+- Categorization (smart) rules with optional category and tag assignments
+- Dashboard financial position and generated insights
+
 ## CURRENT DATABASE
 
 The database currently uses Room.
@@ -104,36 +137,42 @@ Current database version:
 
 6
 
-The database contains:
+The database has these entities:
 
-TransactionEntity
-AccountEntity
+- `TransactionEntity` (`transactions`): id, title, legacy category and account
+  display fields, type, amountPaise, note, createdAt, nullable fromAccountId,
+  toAccountId, accountId, categoryId, and externalMoneyKind
+- `AccountEntity` (`accounts`): id, name, type, openingBalancePaise, isActive,
+  and createdAt
+- `CategoryEntity` (`categories`): id, name, optional icon/color, and isActive
+- `TagEntity` (`tags`): id, name, and isActive
+- `TransactionTagCrossRef` (`transaction_tag_cross_ref`): transactionId and
+  tagId composite key, with a tagId index
+- `SubscriptionEntity` (`subscriptions`): id, name, amountPaise, cadence,
+  nextDate, nullable categoryId/accountId, isConfirmed, and isActive
+- `BudgetEntity` (`budgets`): id, categoryId, limitPaise, period, and isActive
+- `GoalEntity` (`goals`): id, name, targetPaise, manualProgressPaise, optional
+  targetDate/linkedAccountId, isCompleted, and isActive
+- `CategorizationRuleEntity` (`categorization_rules`): id, titlePattern,
+  optional targetCategoryId, and isActive
+- `RuleTagCrossRef` (`rule_tag_cross_ref`): ruleId and tagId composite key,
+  with a tagId index
 
-TransactionEntity currently supports:
+Legacy transaction fields and nullable account/category/transfer IDs are
+intentional. They preserve transactions created before the corresponding
+account and category relationships existed.
 
-- id
-- title
-- category
-- account
-- type
-- amountPaise
-- note
-- createdAt
-- fromAccountId
-- toAccountId
+### Migration history
 
-AccountEntity currently supports:
-
-- id
-- name
-- type
-- openingBalancePaise
-- isActive
-- createdAt
-
-Existing transactions were created before the account system existed.
-
-Therefore nullable transfer account IDs are intentional.
+- 1 → 2: added nullable `fromAccountId` and `toAccountId` to transactions and
+  created `accounts`.
+- 2 → 3: added nullable `accountId` to transactions.
+- 3 → 4: added nullable `categoryId` to transactions and created `categories`,
+  `tags`, and `transaction_tag_cross_ref` (including its tagId index).
+- 4 → 5: created `subscriptions`, `budgets`, `goals`, `categorization_rules`,
+  and `rule_tag_cross_ref` (including its tagId index).
+- 5 → 6: added nullable `externalMoneyKind` to transactions. Existing values
+  remain null so historic external movements are not inferred or rewritten.
 
 ## MONEY STORAGE
 
@@ -181,24 +220,6 @@ Prioritize:
 
 Avoid unnecessarily complicated screens.
 
-## EXISTING FUNCTIONALITY
-
-The application already supports:
-
-- Adding transactions
-- Local Room storage
-- History
-- Transaction details
-- Editing transactions
-- Deleting transactions
-- Income
-- Expense
-- Transfer
-- External Money In
-- External Money Out
-
-Do not break existing functionality while adding new features.
-
 ## DEVELOPMENT METHOD
 
 The project is developed in batches.
@@ -217,36 +238,12 @@ Before making a large architectural change:
 
 Do not rewrite unrelated working code.
 
-## CURRENT DEVELOPMENT STAGE
+## FUTURE PLANNED FEATURES
 
-Current batch:
+The following are planned, not assumed to be implemented:
 
-Batch 4 — Accounts and Real Balances
-
-Batch 4 goals:
-
-- Account management
-- Account balances
-- Default Kotak account
-- Default Cash account
-- Add account
-- Edit account
-- Safe account deletion/deactivation
-- Proper account selector
-- Proper transfer From → To
-- Transfer affects both account balances
-- Existing transactions remain intact
-
-Future planned features include:
-
-- Modern dashboard
 - Search and filters
-- Tags
-- Budgets
-- Goals
 - Recurring payments
-- Subscriptions
-- Automatic categorization rules
 - CSV import
 - Receipt/document scanning
 - Google Sheets synchronization
