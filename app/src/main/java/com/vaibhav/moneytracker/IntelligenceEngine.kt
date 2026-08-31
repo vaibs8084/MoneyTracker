@@ -1,9 +1,28 @@
 package com.vaibhav.moneytracker
 
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
 import java.util.Calendar
 import java.util.Locale
 
 object IntelligenceEngine {
+
+    fun calculateRecurringAveragePaise(transactions: List<TransactionEntity>): Long {
+        require(transactions.isNotEmpty())
+        return transactions.sumOf { it.amountPaise } / transactions.size.toLong()
+    }
+
+    /** UTC makes persisted schedule calculations independent of device timezone/DST. */
+    fun advanceSubscriptionDate(nextDate: Long, cadence: String): Long {
+        val dateTime = Instant.ofEpochMilli(nextDate).atZone(ZoneOffset.UTC)
+        return when (cadence) {
+            "WEEKLY" -> dateTime.plusWeeks(1)
+            "MONTHLY" -> dateTime.plusMonths(1)
+            "YEARLY" -> dateTime.plusYears(1)
+            else -> error("Unsupported subscription cadence: $cadence")
+        }.toInstant().toEpochMilli()
+    }
 
     /* =====================================================
        RECURRING DETECTION
@@ -44,14 +63,11 @@ object IntelligenceEngine {
 
             // Analyze cadence (Monthly is primary target)
             var isMonthly = true
-            var lastDate = Calendar.getInstance()
-            lastDate.timeInMillis = sorted[0].createdAt
-            
             for (i in 1 until sorted.size) {
-                val currentDate = Calendar.getInstance()
-                currentDate.timeInMillis = sorted[i].createdAt
-                
-                val dayDiff = (sorted[i].createdAt - sorted[i-1].createdAt) / (1000 * 60 * 60 * 24)
+                val dayDiff = ChronoUnit.DAYS.between(
+                    Instant.ofEpochMilli(sorted[i - 1].createdAt).atZone(ZoneOffset.UTC).toLocalDate(),
+                    Instant.ofEpochMilli(sorted[i].createdAt).atZone(ZoneOffset.UTC).toLocalDate()
+                )
                 
                 // Allow 27 to 33 days for monthly
                 if (dayDiff < 27 || dayDiff > 33) {
@@ -62,19 +78,15 @@ object IntelligenceEngine {
 
             if (isMonthly) {
                 // Average amount
-                val avgAmount = sorted.map { it.amountPaise }.average().toLong()
+                val avgAmount = calculateRecurringAveragePaise(sorted)
                 
                 // Prediction for next date
-                val nextDateCal = Calendar.getInstance()
-                nextDateCal.timeInMillis = sorted.last().createdAt
-                nextDateCal.add(Calendar.MONTH, 1)
-
                 suggestions.add(
                     SubscriptionEntity(
                         name = group.first().title, // Use original casing from first tx
                         amountPaise = avgAmount,
                         cadence = "MONTHLY",
-                        nextDate = nextDateCal.timeInMillis,
+                        nextDate = advanceSubscriptionDate(sorted.last().createdAt, "MONTHLY"),
                         categoryId = group.first().categoryId,
                         isConfirmed = false,
                         isActive = true
@@ -200,7 +212,7 @@ object IntelligenceEngine {
 
         // 3. Unusual Spending (Compared to previous period if available)
         // For simplicity, we'll just check for any single transaction > 50% of total expense
-        val unusual = expenses.find { it.amountPaise > totalExpense * 0.5 && totalExpense > 100000L }
+        val unusual = expenses.find { it.amountPaise * 2L > totalExpense && totalExpense > 100000L }
         if (unusual != null) {
             insights.add(Insight("🔎", "Unusual spending detected: ${unusual.title} was over 50% of your period's expenses.", priority = 8))
         }

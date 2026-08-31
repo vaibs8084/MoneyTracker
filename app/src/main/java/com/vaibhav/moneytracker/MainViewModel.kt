@@ -55,21 +55,9 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
         _selectedPeriod.value = period
     }
 
-    fun addTransaction(transaction: TransactionEntity, tags: List<TagEntity>, matchedSub: SubscriptionEntity?) {
+    fun addTransaction(transaction: TransactionEntity, tags: List<TagEntity>) {
         viewModelScope.launch {
             repository.insertTransaction(transaction, tags)
-            if (matchedSub != null) {
-                // Update next date logic
-                val nextDate = java.util.Calendar.getInstance().apply {
-                    timeInMillis = matchedSub.nextDate
-                    when (matchedSub.cadence) {
-                        "MONTHLY" -> add(java.util.Calendar.MONTH, 1)
-                        "WEEKLY" -> add(java.util.Calendar.WEEK_OF_YEAR, 1)
-                        "YEARLY" -> add(java.util.Calendar.YEAR, 1)
-                    }
-                }.timeInMillis
-                repository.updateSubscription(matchedSub.copy(nextDate = nextDate))
-            }
         }
     }
 
@@ -131,10 +119,22 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
     }
 
     // Subscription methods
+    fun confirmSubscription(suggestion: SubscriptionEntity) {
+        viewModelScope.launch { repository.confirmSubscription(suggestion) }
+    }
+
     fun updateSubscription(subscription: SubscriptionEntity) {
         viewModelScope.launch {
             repository.updateSubscription(subscription)
         }
+    }
+
+    fun deactivateSubscription(subscription: SubscriptionEntity) {
+        viewModelScope.launch { repository.deactivateSubscription(subscription) }
+    }
+
+    fun recordSubscriptionPayment(subscription: SubscriptionEntity) {
+        viewModelScope.launch { repository.recordSubscriptionPayment(subscription) }
     }
 
     // Budget methods
@@ -145,9 +145,16 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
     }
 
     // Goal methods
-    fun addGoal(name: String, target: Long, targetDate: Long?) {
+    fun addGoal(name: String, target: Long, linkedAccountId: Long?) {
         viewModelScope.launch {
-            repository.insertGoal(GoalEntity(name = name, targetPaise = target, targetDate = targetDate, manualProgressPaise = 0))
+            repository.insertGoal(
+                GoalEntity(
+                    name = name,
+                    targetPaise = target,
+                    linkedAccountId = linkedAccountId,
+                    manualProgressPaise = 0
+                )
+            )
         }
     }
 

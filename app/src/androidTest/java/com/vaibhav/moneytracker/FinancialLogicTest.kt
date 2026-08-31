@@ -2,6 +2,7 @@ package com.vaibhav.moneytracker
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.withTransaction
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
@@ -21,6 +22,7 @@ class FinancialLogicTest {
     private lateinit var db: MoneyTrackerDatabase
     private lateinit var transactionDao: TransactionDao
     private lateinit var accountDao: AccountDao
+    private lateinit var repository: MoneyRepository
 
     @Before
     fun createDb() {
@@ -28,6 +30,7 @@ class FinancialLogicTest {
         db = Room.inMemoryDatabaseBuilder(context, MoneyTrackerDatabase::class.java).build()
         transactionDao = db.transactionDao()
         accountDao = db.accountDao()
+        repository = MoneyRepository(db)
     }
 
     @After
@@ -261,6 +264,235 @@ class FinancialLogicTest {
         assertNull(stored.fromAccountId)
         assertNull(stored.toAccountId)
         assertTrue(transactionDao.getAll().any { it.id == id })
+    }
+
+    @Test
+    fun confirmingSubscription_persistsOneConfirmedSubscription_withoutCreatingExpense() = runBlocking {
+        val account = createAccount("Cash")
+        val categoryId = db.categoryDao().insert(CategoryEntity(name = "Streaming"))
+        val suggestion = SubscriptionEntity(
+            name = "Music",
+            amountPaise = 12_345L,
+            cadence = "MONTHLY",
+            nextDate = 1_700_000_000_000L,
+            accountId = account.id,
+            categoryId = categoryId
+        )
+
+        repository.confirmSubscription(suggestion)
+
+        val confirmed = db.subscriptionDao().getConfirmedSubscriptions()
+        assertEquals(1, confirmed.size)
+        assertEquals("Music", confirmed.single().name)
+        assertEquals(account.id, confirmed.single().accountId)
+        assertEquals(categoryId, confirmed.single().categoryId)
+        assertTrue(confirmed.single().isConfirmed)
+        assertEquals(0, transactionDao.getAll().size)
+    }
+
+    @Test
+    fun recordingSubscriptionPayment_createsOneExpense_andAdvancesEveryCadence() = runBlocking {
+        val account = createAccount("Cash")
+        val categoryId = db.categoryDao().insert(CategoryEntity(name = "Bills"))
+        val start = 1_706_659_200_000L // 2024-01-31T00:00:00Z
+
+        listOf("WEEKLY", "MONTHLY", "YEARLY").forEach { cadence ->
+            val subscriptionId = db.subscriptionDao().insert(
+                SubscriptionEntity(
+                    name = cadence,
+                    amountPaise = 9_999L,
+                    cadence = cadence,
+                    nextDate = start,
+                    accountId = account.id,
+                    categoryId = categoryId,
+                    isConfirmed = true
+                )
+            )
+            val subscription = db.subscriptionDao().getConfirmedSubscriptions().first { it.id == subscriptionId }
+
+            repository.recordSubscriptionPayment(subscription)
+
+            val payment = transactionDao.getAll().single { it.title == cadence }
+            assertEquals("Expense", payment.type)
+            assertEquals(account.id, payment.accountId)
+            assertEquals(categoryId, payment.categoryId)
+            val updated = db.subscriptionDao().getConfirmedSubscriptions().first { it.id == subscriptionId }
+            val expectedNextDate = when (cadence) {
+                "WEEKLY" -> 1_707_264_000_000L // 2024-02-07T00:00:00Z
+                "MONTHLY" -> 1_709_164_800_000L // 2024-02-29T00:00:00Z
+                "YEARLY" -> 1_738_281_600_000L // 2025-01-31T00:00:00Z
+                else -> error("Unexpected test cadence")
+            }
+            assertEquals(expectedNextDate, updated.nextDate)
+        }
+        assertEquals(3, transactionDao.getAll().size)
+    }
+
+    @Test
+    fun editingSubscription_persistsUpdatedFields() = runBlocking {
+        val firstAccount = createAccount("Cash")
+        val secondAccount = createAccount("Bank")
+        val firstCategoryId = db.categoryDao().insert(CategoryEntity(name = "Old"))
+        val secondCategoryId = db.categoryDao().insert(CategoryEntity(name = "New"))
+        val id = db.subscriptionDao().insert(
+            SubscriptionEntity(
+                name = "Original",
+                amountPaise = 1_000L,
+                cadence = "MONTHLY",
+                nextDate = 1_700_000_000_000L,
+                accountId = firstAccount.id,
+                categoryId = firstCategoryId,
+                isConfirmed = true
+            )
+        )
+        val edited = db.subscriptionDao().getByName("Original")!!.copy(
+            name = "Renamed",
+            amountPaise = 2_345L,
+            cadence = "YEARLY",
+            nextDate = 1_800_000_000_000L,
+            accountId = secondAccount.id,
+            categoryId = secondCategoryId
+        )
+
+        repository.updateSubscription(edited)
+
+        val stored = db.subscriptionDao().getByName("Renamed")!!
+        assertEquals(id, stored.id)
+        assertEquals(2_345L, stored.amountPaise)
+        assertEquals("YEARLY", stored.cadence)
+        assertEquals(1_800_000_000_000L, stored.nextDate)
+        assertEquals(secondAccount.id, stored.accountId)
+        assertEquals(secondCategoryId, stored.categoryId)
+        assertTrue(stored.isConfirmed)
+    }
+
+    @Test
+    fun recurringAverage_usesExactIntegerPaiseArithmetic() {
+        val transactions = listOf(
+            TransactionEntity(title = "A", category = "", account = "", type = "Expense", amountPaise = 100L, note = "", createdAt = 1L),
+            TransactionEntity(title = "A", category = "", account = "", type = "Expense", amountPaise = 101L, note = "", createdAt = 2L),
+            TransactionEntity(title = "A", category = "", account = "", type = "Expense", amountPaise = 102L, note = "", createdAt = 3L)
+        )
+
+        assertEquals(101L, IntelligenceEngine.calculateRecurringAveragePaise(transactions))
+    }
+
+    @Test
+    fun deactivatingSubscription_preservesRecord_butHidesItFromConfirmedList() = runBlocking {
+        val id = db.subscriptionDao().insert(
+            SubscriptionEntity(
+                name = "Music",
+                amountPaise = 1_000L,
+                cadence = "MONTHLY",
+                nextDate = 1L,
+                isConfirmed = true
+            )
+        )
+        val subscription = db.subscriptionDao().getConfirmedSubscriptions().single()
+
+        repository.deactivateSubscription(subscription)
+
+        assertTrue(db.subscriptionDao().getConfirmedSubscriptions().isEmpty())
+        assertEquals(id, db.subscriptionDao().getByName("Music")!!.id)
+        assertFalse(db.subscriptionDao().getByName("Music")!!.isActive)
+    }
+
+    @Test
+    fun goalLinkedAccountId_persistsWithoutChangingTargetDate() = runBlocking {
+        val account = createAccount("Goal account")
+
+        repository.insertGoal(GoalEntity(name = "Trip", targetPaise = 50_000L, linkedAccountId = account.id))
+
+        val goal = db.goalDao().getAllActive().single()
+        assertEquals(account.id, goal.linkedAccountId)
+        assertNull(goal.targetDate)
+    }
+
+    @Test
+    fun updatingTransaction_preservesExplicitTitle() = runBlocking {
+        val account = createAccount("Cash")
+        val id = transactionDao.insert(
+            TransactionEntity(
+                title = "Original title",
+                category = "Food",
+                account = account.name,
+                type = "Expense",
+                amountPaise = 100L,
+                note = "Old note",
+                createdAt = 1L,
+                accountId = account.id
+            )
+        )
+        val stored = transactionDao.getById(id)!!
+
+        repository.updateTransaction(stored.copy(note = "New note", amountPaise = 200L), emptyList())
+
+        assertEquals("Original title", transactionDao.getById(id)!!.title)
+    }
+
+    @Test
+    fun renamingAccount_updatesLegacyNameOnlyTransactions_withoutChangingIdLinkedRecords() = runBlocking {
+        val account = createAccount("Cash")
+        insertTransaction("Income", 100L, accountName = "Cash")
+        insertTransaction("Expense", 30L, account = account)
+
+        repository.updateAccount(account.copy(name = "Wallet"))
+        val renamed = accountDao.getById(account.id)!!
+
+        assertEquals("Wallet", transactionDao.getAll().first { it.accountId == null }.account)
+        assertEquals("Cash", transactionDao.getAll().first { it.accountId == account.id }.account)
+        assertEquals(70L, FinancialEngine.calculateAccountBalance(db, renamed))
+    }
+
+    @Test
+    fun repositoryTransactionTagWrites_replaceTagsAtomically() = runBlocking {
+        val account = createAccount("Cash")
+        val firstTag = TagEntity(name = "First").let { tag -> db.tagDao().insert(tag); db.tagDao().getByName(tag.name)!! }
+        val secondTag = TagEntity(name = "Second").let { tag -> db.tagDao().insert(tag); db.tagDao().getByName(tag.name)!! }
+        val transaction = TransactionEntity(
+            title = "Lunch",
+            category = "Food",
+            account = account.name,
+            type = "Expense",
+            amountPaise = 500L,
+            note = "",
+            createdAt = 1L,
+            accountId = account.id
+        )
+
+        val id = repository.insertTransaction(transaction, listOf(firstTag, firstTag))
+        repository.updateTransaction(transaction.copy(id = id), listOf(secondTag))
+
+        assertEquals(listOf(secondTag.id), transactionDao.getByIdWithTags(id)!!.tags.map { it.id })
+    }
+
+    @Test
+    fun roomTransaction_rollsBackEarlierWriteWhenLaterWriteFails() = runBlocking {
+        val account = createAccount("Cash")
+        val transaction = TransactionEntity(
+            title = "Should roll back",
+            category = "Food",
+            account = account.name,
+            type = "Expense",
+            amountPaise = 500L,
+            note = "",
+            createdAt = 1L,
+            accountId = account.id
+        )
+
+        try {
+            db.withTransaction {
+                transactionDao.insert(transaction)
+                // The repository has no injectable DAO seam; this deterministic SQL failure
+                // exercises the same Room transaction mechanism used by its multi-write methods.
+                db.openHelper.writableDatabase.execSQL("INSERT INTO table_that_does_not_exist VALUES (1)")
+            }
+            throw AssertionError("Expected the transaction to fail")
+        } catch (_: Exception) {
+            // Expected: Room must roll back the preceding insert.
+        }
+
+        assertTrue(transactionDao.getAll().isEmpty())
     }
 
     private suspend fun createAccount(name: String, openingBalancePaise: Long = 0L): AccountEntity {
