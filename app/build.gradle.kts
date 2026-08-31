@@ -38,6 +38,10 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        execution = "ANDROID_TEST_ORCHESTRATOR"
+    }
 }
 
 dependencies {
@@ -123,6 +127,14 @@ dependencies {
 
     androidTestImplementation(
         libs.androidx.junit
+    )
+
+    androidTestUtil(
+        libs.androidx.test.orchestrator
+    )
+
+    androidTestUtil(
+        libs.androidx.test.services
     )
 
     debugImplementation(
