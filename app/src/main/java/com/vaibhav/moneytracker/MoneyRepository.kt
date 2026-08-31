@@ -127,4 +127,59 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
             ruleId
         }
     }
+
+    /**
+     * Imports a batch of transactions atomically.
+     * Duplicate protection: skips rows where a transaction with the same 
+     * title, amount, date (same day), and accountId already exists.
+     */
+    suspend fun bulkImportTransactions(
+        items: List<Pair<TransactionEntity, List<TagEntity>>>
+    ): ImportResult {
+        return db.withTransaction {
+            var importedCount = 0
+            var duplicateCount = 0
+            
+            // Fetch existing transactions for duplicate detection
+            val existing = db.transactionDao().getAll().toMutableList()
+            
+            val calendar = java.util.Calendar.getInstance()
+            fun getDayStart(timestamp: Long): Long {
+                calendar.timeInMillis = timestamp
+                calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
+                calendar.set(java.util.Calendar.MINUTE, 0)
+                calendar.set(java.util.Calendar.SECOND, 0)
+                calendar.set(java.util.Calendar.MILLISECOND, 0)
+                return calendar.timeInMillis
+            }
+
+            for ((transaction, tags) in items) {
+                // Duplicate check (both against DB and within the current batch)
+                val isDuplicate = existing.any { ex ->
+                    ex.title == transaction.title &&
+                    ex.amountPaise == transaction.amountPaise &&
+                    ex.accountId == transaction.accountId &&
+                    getDayStart(ex.createdAt) == getDayStart(transaction.createdAt)
+                }
+
+                if (isDuplicate) {
+                    duplicateCount++
+                    continue
+                }
+
+                val id = db.transactionDao().insert(transaction)
+                val inserted = transaction.copy(id = id)
+                existing.add(inserted) // Track for intra-batch duplicate detection
+
+                tags.distinctBy { it.id }.forEach { tag ->
+                    db.transactionDao().insertTagRef(TransactionTagCrossRef(id, tag.id))
+                }
+                importedCount++
+            }
+
+            ImportResult(importedCount, duplicateCount)
+        }
+    }
+
+    data class ImportResult(val imported: Int, val duplicates: Int)
 }

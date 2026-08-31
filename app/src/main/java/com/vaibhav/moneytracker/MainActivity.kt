@@ -80,9 +80,10 @@ class MainActivity : ComponentActivity() {
         val database = MoneyTrackerDatabase.getInstance(this)
         val repository = MoneyRepository(database)
         val viewModel = MainViewModel(repository)
+        val csvViewModel = CSVImportViewModel(repository)
 
         setContent {
-            MoneyTrackerApp(viewModel, database)
+            MoneyTrackerApp(viewModel, csvViewModel, database)
         }
     }
 }
@@ -101,6 +102,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MoneyTrackerApp(
     viewModel: MainViewModel,
+    csvViewModel: CSVImportViewModel,
     database: MoneyTrackerDatabase
 ) {
 
@@ -493,6 +495,9 @@ fun MoneyTrackerApp(
                         },
                         onRulesClick = {
                             selectedTab = 10
+                        },
+                        onCSVImportClick = {
+                            selectedTab = 13
                         }
                     )
                 }
@@ -619,6 +624,17 @@ fun MoneyTrackerApp(
                         )
                     }
                 }
+
+                13 -> {
+                    com.vaibhav.moneytracker.ui.CSVImportScreen(
+                        modifier = Modifier.padding(paddingValues),
+                        viewModel = csvViewModel,
+                        accounts = accounts,
+                        categories = categories,
+                        rules = smartRules,
+                        onBack = { selectedTab = 3 }
+                    )
+                }
             }
         }
     }
@@ -640,7 +656,8 @@ fun MoreMenuScreen(
     onSubscriptionsClick: () -> Unit,
     onBudgetsClick: () -> Unit,
     onGoalsClick: () -> Unit,
-    onRulesClick: () -> Unit
+    onRulesClick: () -> Unit,
+    onCSVImportClick: () -> Unit
 ) {
 
     LazyColumn(
@@ -703,6 +720,10 @@ fun MoreMenuScreen(
 
         item {
             MoreMenuCard(title = "Smart Rules", subtitle = "Auto-classify transactions", icon = "🤖", onClick = onRulesClick)
+        }
+
+        item {
+            MoreMenuCard(title = "CSV Import", subtitle = "Bulk import bank statements", icon = "📂", onClick = onCSVImportClick)
         }
 
         item {
