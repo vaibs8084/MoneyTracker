@@ -1,0 +1,17 @@
+﻿.gradle/
+build/
+*/build/
+local.properties
+.idea/
+*.iml
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.jks
+*.keystore
+.env
+
+*.artifact.md
+
+.gemini/
