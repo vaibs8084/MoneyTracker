@@ -267,9 +267,9 @@ fun MoneyTrackerApp(
                 showAddTransaction = false
             },
 
-            onSave = { transaction, txTags, matchedSub ->
+            onSave = { transaction, txTags ->
 
-                viewModel.addTransaction(transaction, txTags, matchedSub)
+                viewModel.addTransaction(transaction, txTags)
                 showAddTransaction = false
             }
         )
@@ -541,6 +541,8 @@ fun MoneyTrackerApp(
                         viewModel = viewModel,
                         confirmed = confirmedSubscriptions,
                         suggestions = recurringSuggestions,
+                        accounts = accounts,
+                        categories = categories,
                         onBack = { selectedTab = 3 },
                         onRefreshSuggestions = {
                             coroutineScope.launch {
@@ -1192,7 +1194,7 @@ fun AddTransactionScreen(
     rules: List<RuleWithTags>,
     confirmedSubscriptions: List<SubscriptionEntity>,
     onBack: () -> Unit,
-    onSave: (TransactionEntity, List<TagEntity>, SubscriptionEntity?) -> Unit
+    onSave: (TransactionEntity, List<TagEntity>) -> Unit
 ) {
     var amount by remember { mutableStateOf("") }
     var moneySource by remember { mutableStateOf("Personal") }
@@ -1846,11 +1848,7 @@ fun AddTransactionScreen(
                                         }
                                 )
 
-                            onSave(
-                                transaction,
-                                selectedTags,
-                                matchedSubscription
-                            )
+                            onSave(transaction, selectedTags)
                         }
                     },
 
@@ -1955,6 +1953,7 @@ fun EditTransactionScreen(
     onBack: () -> Unit,
     onSave: (TransactionEntity, List<TagEntity>) -> Unit
 ) {
+    var title by remember { mutableStateOf(transaction.title) }
     var amount by remember {
         mutableStateOf((transaction.amountPaise / 100).toString())
     }
@@ -2075,6 +2074,17 @@ fun EditTransactionScreen(
                 )
             }
 
+
+            item {
+
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Transaction Title") },
+                    singleLine = true
+                )
+            }
 
             item {
 
@@ -2414,17 +2424,7 @@ fun EditTransactionScreen(
                                     id =
                                         transaction.id,
 
-                                    title =
-                                        if (
-                                            note.isNotBlank()
-                                        ) {
-
-                                            note
-
-                                        } else {
-
-                                            selectedCategory?.name ?: "General"
-                                        },
+                                    title = title.ifBlank { transaction.title },
 
                                     category =
                                         selectedCategory?.name ?: "General",
@@ -3421,7 +3421,8 @@ fun AccountManagementScreen(
                 AccountItem(
                     account = account,
                     currentBalance = balance,
-                    onClick = { onAccountClick(account) }
+                    onClick = { onAccountClick(account) },
+                    onEdit = { editingAccount = account }
                 )
             }
 
@@ -3434,7 +3435,8 @@ fun AccountManagementScreen(
 fun AccountItem(
     account: AccountEntity,
     currentBalance: Long,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onEdit: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -3458,12 +3460,15 @@ fun AccountItem(
                     style = MaterialTheme.typography.bodySmall
                 )
             }
-            Text(
-                text = formatRupees(currentBalance),
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-                color = if (currentBalance >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = formatRupees(currentBalance),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = if (currentBalance >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                )
+                TextButton(onClick = onEdit) { Text("Edit") }
+            }
         }
     }
 }
@@ -3767,9 +3772,45 @@ fun SubscriptionManagementScreen(
     viewModel: MainViewModel,
     confirmed: List<SubscriptionEntity>,
     suggestions: List<SubscriptionEntity>,
+    accounts: List<AccountEntity>,
+    categories: List<CategoryEntity>,
     onBack: () -> Unit,
     onRefreshSuggestions: () -> Unit
 ) {
+    var confirmingSuggestion by remember { mutableStateOf<SubscriptionEntity?>(null) }
+    var editingSubscription by remember { mutableStateOf<SubscriptionEntity?>(null) }
+    val ignoredSuggestionNames = remember { mutableStateListOf<String>() }
+    val visibleSuggestions = suggestions.filterNot { it.name in ignoredSuggestionNames }
+
+    confirmingSuggestion?.let { suggestion ->
+        SubscriptionEditorDialog(
+            title = "Confirm Subscription",
+            initial = suggestion.copy(isConfirmed = true),
+            accounts = accounts,
+            categories = categories,
+            onDismiss = { confirmingSuggestion = null },
+            onSave = { confirmedSubscription ->
+                viewModel.confirmSubscription(confirmedSubscription)
+                ignoredSuggestionNames.add(suggestion.name)
+                confirmingSuggestion = null
+            }
+        )
+    }
+
+    editingSubscription?.let { subscription ->
+        SubscriptionEditorDialog(
+            title = "Edit Subscription",
+            initial = subscription,
+            accounts = accounts,
+            categories = categories,
+            onDismiss = { editingSubscription = null },
+            onSave = { updated ->
+                viewModel.updateSubscription(updated)
+                editingSubscription = null
+            }
+        )
+    }
+
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -3792,11 +3833,11 @@ fun SubscriptionManagementScreen(
             modifier = Modifier.fillMaxSize().padding(paddingValues).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            if (suggestions.isNotEmpty()) {
+            if (visibleSuggestions.isNotEmpty()) {
                 item {
                     Text(text = "Review Suggestions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 }
-                items(suggestions) { suggestion ->
+                items(visibleSuggestions) { suggestion ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(20.dp),
@@ -3809,28 +3850,14 @@ fun SubscriptionManagementScreen(
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     onClick = {
-                                        viewModel.addTransaction(
-                                            TransactionEntity(
-                                                title = suggestion.name,
-                                                category = "Subscription",
-                                                account = "Cash", // Default or user choice needed later
-                                                type = "Expense",
-                                                amountPaise = suggestion.amountPaise,
-                                                note = "Subscription confirmed",
-                                                createdAt = System.currentTimeMillis(),
-                                                categoryId = suggestion.categoryId
-                                            ),
-                                            emptyList(),
-                                            suggestion.copy(isConfirmed = true)
-                                        )
-                                        onRefreshSuggestions()
+                                        confirmingSuggestion = suggestion
                                     },
                                     shape = RoundedCornerShape(12.dp)
                                 ) { Text("Confirm") }
                                 OutlinedButton(
                                     onClick = {
-                                        viewModel.updateSubscription(suggestion.copy(isActive = false))
-                                        onRefreshSuggestions()
+                                        // Suggestions are derived, not stored; ignore only hides this review item.
+                                        ignoredSuggestionNames.add(suggestion.name)
                                     },
                                     shape = RoundedCornerShape(12.dp)
                                 ) { Text("Ignore") }
@@ -3863,11 +3890,87 @@ fun SubscriptionManagementScreen(
                             }
                             Text(text = formatRupees(sub.amountPaise), fontWeight = FontWeight.Bold)
                         }
+                        Row(
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(onClick = { viewModel.recordSubscriptionPayment(sub) }) {
+                                Text("Record Payment")
+                            }
+                            OutlinedButton(onClick = { editingSubscription = sub }) { Text("Edit") }
+                            TextButton(onClick = { viewModel.deactivateSubscription(sub) }) {
+                                Text("Deactivate", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun SubscriptionEditorDialog(
+    title: String,
+    initial: SubscriptionEntity,
+    accounts: List<AccountEntity>,
+    categories: List<CategoryEntity>,
+    onDismiss: () -> Unit,
+    onSave: (SubscriptionEntity) -> Unit
+) {
+    var name by remember(initial.id) { mutableStateOf(initial.name) }
+    var amount by remember(initial.id) { mutableStateOf((initial.amountPaise / 100L).toString()) }
+    var cadence by remember(initial.id) { mutableStateOf(initial.cadence) }
+    var accountId by remember(initial.id) { mutableStateOf(initial.accountId ?: accounts.firstOrNull()?.id) }
+    var categoryId by remember(initial.id) { mutableStateOf(initial.categoryId) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") })
+                OutlinedTextField(value = amount, onValueChange = { amount = it }, label = { Text("Amount") })
+                Text("Cadence", style = MaterialTheme.typography.labelSmall)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(listOf("WEEKLY", "MONTHLY", "YEARLY")) { option ->
+                        SelectionChip(option, cadence == option) { cadence = option }
+                    }
+                }
+                Text("Pay from account", style = MaterialTheme.typography.labelSmall)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(accounts) { account ->
+                        SelectionChip(account.name, accountId == account.id) { accountId = account.id }
+                    }
+                }
+                Text("Category", style = MaterialTheme.typography.labelSmall)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { SelectionChip("None", categoryId == null) { categoryId = null } }
+                    items(categories) { category ->
+                        SelectionChip(category.name, categoryId == category.id) { categoryId = category.id }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = name.isNotBlank() && (amount.toLongOrNull() ?: 0L) > 0L && accountId != null,
+                onClick = {
+                    onSave(
+                        initial.copy(
+                            name = name.trim(),
+                            amountPaise = amount.toLong() * 100L,
+                            cadence = cadence,
+                            accountId = accountId,
+                            categoryId = categoryId,
+                            isConfirmed = true
+                        )
+                    )
+                }
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 
@@ -3997,8 +4100,8 @@ fun GoalManagementScreen(
         AddGoalDialog(
             accounts = accounts,
             onDismiss = { showAdd = false },
-            onSave = { name, target, targetDate ->
-                viewModel.addGoal(name, target, targetDate)
+            onSave = { name, target, linkedAccountId ->
+                viewModel.addGoal(name, target, linkedAccountId)
                 showAdd = false
             }
         )
