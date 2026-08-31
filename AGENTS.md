@@ -102,7 +102,7 @@ The database currently uses Room.
 
 Current database version:
 
-2
+6
 
 The database contains:
 
@@ -260,3 +260,4 @@ Future planned features include:
 If a requested change conflicts with these rules, explain the conflict before making a destructive or architectural change.
 
 Never silently change financial logic.
+
