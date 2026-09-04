@@ -2,8 +2,10 @@ package com.vaibhav.moneytracker
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
 
@@ -70,6 +72,15 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
     fun deleteTransaction(transaction: TransactionEntity) {
         viewModelScope.launch {
             repository.deleteTransaction(transaction)
+        }
+    }
+
+    fun deleteTransactions(ids: List<Long>, onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.deleteTransactions(ids)
+            withContext(Dispatchers.Main) {
+                onComplete()
+            }
         }
     }
 

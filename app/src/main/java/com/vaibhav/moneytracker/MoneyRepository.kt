@@ -51,6 +51,14 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
         db.transactionDao().delete(transaction)
     }
 
+    suspend fun deleteTransactions(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        db.withTransaction {
+            db.transactionDao().deleteTagsForTransactions(ids)
+            db.transactionDao().deleteByIds(ids)
+        }
+    }
+
     suspend fun insertAccount(account: AccountEntity) = db.accountDao().insert(account)
     suspend fun updateAccount(account: AccountEntity) {
         db.withTransaction {
@@ -129,20 +137,17 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
     }
 
     /**
-     * Imports a batch of transactions atomically.
-     * Duplicate protection: skips rows where a transaction with the same 
-     * title, amount, date (same day), and accountId already exists.
+     * Imports a batch of confirmed candidate transactions atomically.
+     * All transactions in [items] confirmed by the user are inserted in a single Room transaction.
+     * Legitimate repeated transactions on the same date are preserved.
      */
     suspend fun bulkImportTransactions(
         items: List<Pair<TransactionEntity, List<TagEntity>>>
     ): ImportResult {
         return db.withTransaction {
             var importedCount = 0
-            var duplicateCount = 0
-            
-            // Fetch existing transactions for duplicate detection
-            val existing = db.transactionDao().getAll().toMutableList()
-            
+            val existing = db.transactionDao().getAll()
+
             val calendar = java.util.Calendar.getInstance()
             fun getDayStart(timestamp: Long): Long {
                 calendar.timeInMillis = timestamp
@@ -153,24 +158,19 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
                 return calendar.timeInMillis
             }
 
+            var duplicateCount = 0
             for ((transaction, tags) in items) {
-                // Duplicate check (both against DB and within the current batch)
-                val isDuplicate = existing.any { ex ->
+                val hasMatchInDb = existing.any { ex ->
                     ex.title == transaction.title &&
                     ex.amountPaise == transaction.amountPaise &&
                     ex.accountId == transaction.accountId &&
                     getDayStart(ex.createdAt) == getDayStart(transaction.createdAt)
                 }
-
-                if (isDuplicate) {
+                if (hasMatchInDb) {
                     duplicateCount++
-                    continue
                 }
 
                 val id = db.transactionDao().insert(transaction)
-                val inserted = transaction.copy(id = id)
-                existing.add(inserted) // Track for intra-batch duplicate detection
-
                 tags.distinctBy { it.id }.forEach { tag ->
                     db.transactionDao().insertTagRef(TransactionTagCrossRef(id, tag.id))
                 }

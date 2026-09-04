@@ -455,6 +455,10 @@ fun MoneyTrackerApp(
 
                         onTransactionClick = {
                             selectedTransaction = it
+                        },
+
+                        onDeleteTransactions = { ids, onComplete ->
+                            viewModel.deleteTransactions(ids, onComplete)
                         }
                     )
                 }
@@ -632,7 +636,8 @@ fun MoneyTrackerApp(
                         accounts = accounts,
                         categories = categories,
                         rules = smartRules,
-                        onBack = { selectedTab = 3 }
+                        onBack = { selectedTab = 3 },
+                        onImportSuccess = { selectedTab = 1 }
                     )
                 }
             }

@@ -195,6 +195,12 @@ interface TransactionDao {
     @Query("DELETE FROM transaction_tag_cross_ref WHERE transactionId = :transactionId")
     suspend fun deleteTagsForTransaction(transactionId: Long)
 
+    @Query("DELETE FROM transaction_tag_cross_ref WHERE transactionId IN (:transactionIds)")
+    suspend fun deleteTagsForTransactions(transactionIds: List<Long>)
+
+    @Query("DELETE FROM transactions WHERE id IN (:transactionIds)")
+    suspend fun deleteByIds(transactionIds: List<Long>)
+
     /**
      * Keeps pre-account-system records attributable after an account rename.
      * ID-linked transactions are intentionally left untouched.

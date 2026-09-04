@@ -6,11 +6,11 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Formats a paise amount into a rupee string (e.g., ₹500.00).
+ * Formats a paise amount into a rupee string (e.g., ₹500.00, ₹2,000.00).
  */
 fun formatRupees(amountPaise: Long): String {
     val rupees = amountPaise / 100.0
-    return String.format(Locale.getDefault(), "₹%.2f", rupees)
+    return String.format(Locale.US, "₹%,.2f", rupees)
 }
 
 /**
@@ -26,10 +26,11 @@ fun formatSignedAmount(transaction: TransactionUiModel): String {
 }
 
 /**
- * Formats a timestamp into a date string.
+ * Formats a timestamp into a date string (e.g., 04 Sep 2026).
  */
 fun formatDate(timestamp: Long): String {
-    val sdf = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+    if (timestamp <= 0L) return "Date unavailable"
+    val sdf = SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH)
     return sdf.format(Date(timestamp))
 }
 

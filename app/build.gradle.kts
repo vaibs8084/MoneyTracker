@@ -106,6 +106,11 @@ dependencies {
         libs.kotlinx.coroutines.android
     )
 
+    // PDFBox for PDF statement parsing
+    implementation(
+        libs.pdfbox.android
+    )
+
     // Tests
     testImplementation(
         libs.junit
