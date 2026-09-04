@@ -7,6 +7,9 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+import com.vaibhav.moneytracker.capture.CapturedTransactionDao
+import com.vaibhav.moneytracker.capture.CapturedTransactionEntity
+
 @Database(
     entities = [
         TransactionEntity::class,
@@ -18,9 +21,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BudgetEntity::class,
         GoalEntity::class,
         CategorizationRuleEntity::class,
-        RuleTagCrossRef::class
+        RuleTagCrossRef::class,
+        CapturedTransactionEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class MoneyTrackerDatabase : RoomDatabase() {
@@ -40,6 +44,8 @@ abstract class MoneyTrackerDatabase : RoomDatabase() {
     abstract fun goalDao(): GoalDao
 
     abstract fun categorizationRuleDao(): CategorizationRuleDao
+
+    abstract fun capturedTransactionDao(): CapturedTransactionDao
 
 
     companion object {
@@ -288,6 +294,32 @@ abstract class MoneyTrackerDatabase : RoomDatabase() {
         }
 
 
+        /**
+         * Migration from database version 6 → 7.
+         * Creates captured_transactions table for Notification Capture Inbox.
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS captured_transactions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        title TEXT NOT NULL,
+                        amountPaise INTEGER NOT NULL,
+                        type TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        sourceApp TEXT NOT NULL,
+                        referenceNumber TEXT,
+                        suggestedAccountId INTEGER,
+                        suggestedCategoryId INTEGER,
+                        status TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+
         fun getInstance(
             context: Context
         ): MoneyTrackerDatabase {
@@ -308,7 +340,8 @@ abstract class MoneyTrackerDatabase : RoomDatabase() {
                         MIGRATION_2_3,
                         MIGRATION_3_4,
                         MIGRATION_4_5,
-                        MIGRATION_5_6
+                        MIGRATION_5_6,
+                        MIGRATION_6_7
                     )
                     .build()
                     .also {

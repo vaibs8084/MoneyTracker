@@ -3,6 +3,7 @@ package com.vaibhav.moneytracker
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import androidx.room.withTransaction
+import com.vaibhav.moneytracker.capture.CapturedTransactionEntity
 
 class MoneyRepository(private val db: MoneyTrackerDatabase) {
 
@@ -14,6 +15,49 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
     fun getAccounts(): Flow<List<AccountEntity>> = db.accountDao().getAllFlow()
 
     fun getAllAccounts(): Flow<List<AccountEntity>> = db.accountDao().getAllIncludingInactiveFlow()
+
+    // Captured Transactions (Capture Inbox)
+    fun getPendingCapturesFlow(): Flow<List<CapturedTransactionEntity>> =
+        db.capturedTransactionDao().getPendingCapturesFlow()
+
+    fun getPendingCaptureCountFlow(): Flow<Int> =
+        db.capturedTransactionDao().getPendingCountFlow()
+
+    suspend fun approveCapturedTransaction(captured: CapturedTransactionEntity) {
+        db.withTransaction {
+            val account = captured.suggestedAccountId?.let { db.accountDao().getById(it) }
+                ?: db.accountDao().getAllIncludingInactive().firstOrNull()
+                ?: error("An account is required to approve a transaction")
+
+            val category = captured.suggestedCategoryId?.let { id ->
+                db.categoryDao().getAll().firstOrNull { it.id == id }
+            }
+
+            db.transactionDao().insert(
+                TransactionEntity(
+                    title = captured.title,
+                    category = category?.name ?: "General",
+                    account = account.name,
+                    type = captured.type,
+                    amountPaise = captured.amountPaise,
+                    note = "Captured from ${captured.sourceApp}",
+                    createdAt = captured.createdAt,
+                    accountId = account.id,
+                    categoryId = captured.suggestedCategoryId
+                )
+            )
+
+            db.capturedTransactionDao().updateStatus(captured.id, "APPROVED")
+        }
+    }
+
+    suspend fun rejectCapturedTransaction(captured: CapturedTransactionEntity) {
+        db.capturedTransactionDao().updateStatus(captured.id, "REJECTED")
+    }
+
+    suspend fun updateCapturedTransaction(captured: CapturedTransactionEntity) {
+        db.capturedTransactionDao().update(captured)
+    }
 
     suspend fun getTransactionsInRange(accountId: Long?, startDate: Long, endDate: Long): List<TransactionEntity> {
         return if (accountId != null && accountId > 0L) {

@@ -63,6 +63,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vaibhav.moneytracker.ui.CaptureInboxScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -502,6 +503,9 @@ fun MoneyTrackerApp(
                         },
                         onCSVImportClick = {
                             selectedTab = 13
+                        },
+                        onCaptureInboxClick = {
+                            selectedTab = 14
                         }
                     )
                 }
@@ -640,6 +644,16 @@ fun MoneyTrackerApp(
                         onImportSuccess = { selectedTab = 1 }
                     )
                 }
+
+                14 -> {
+                    CaptureInboxScreen(
+                        modifier = Modifier.padding(paddingValues),
+                        viewModel = viewModel,
+                        accounts = accounts,
+                        categories = categories,
+                        onBack = { selectedTab = 3 }
+                    )
+                }
             }
         }
     }
@@ -662,7 +676,8 @@ fun MoreMenuScreen(
     onBudgetsClick: () -> Unit,
     onGoalsClick: () -> Unit,
     onRulesClick: () -> Unit,
-    onCSVImportClick: () -> Unit
+    onCSVImportClick: () -> Unit,
+    onCaptureInboxClick: () -> Unit
 ) {
 
     LazyColumn(
@@ -679,6 +694,37 @@ fun MoreMenuScreen(
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
             )
+        }
+
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onCaptureInboxClick() },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "📥",
+                        fontSize = 24.sp
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column {
+                        Text(
+                            text = "Capture Inbox",
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Review notifications captured from PhonePe, Paytm, GPay & Banks",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
         }
 
         item {

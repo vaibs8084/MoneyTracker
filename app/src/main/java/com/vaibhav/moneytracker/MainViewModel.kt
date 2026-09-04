@@ -2,6 +2,7 @@ package com.vaibhav.moneytracker
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.vaibhav.moneytracker.capture.CapturedTransactionEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -38,6 +39,13 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
 
     val smartRules: StateFlow<List<RuleWithTags>> = repository.getSmartRules()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val pendingCaptures: StateFlow<List<CapturedTransactionEntity>> =
+        repository.getPendingCapturesFlow()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val pendingCaptureCount: StateFlow<Int> = repository.getPendingCaptureCountFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     val financialPosition: StateFlow<FinancialPosition?> = combine(
         transactions,
@@ -81,6 +89,25 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
             withContext(Dispatchers.Main) {
                 onComplete()
             }
+        }
+    }
+
+    // Capture Inbox methods
+    fun approveCapturedTransaction(captured: CapturedTransactionEntity) {
+        viewModelScope.launch {
+            repository.approveCapturedTransaction(captured)
+        }
+    }
+
+    fun rejectCapturedTransaction(captured: CapturedTransactionEntity) {
+        viewModelScope.launch {
+            repository.rejectCapturedTransaction(captured)
+        }
+    }
+
+    fun updateCapturedTransaction(captured: CapturedTransactionEntity) {
+        viewModelScope.launch {
+            repository.updateCapturedTransaction(captured)
         }
     }
 
