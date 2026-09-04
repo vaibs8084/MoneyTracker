@@ -5,6 +5,8 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.vaibhav.moneytracker.csv.CSVParser
+import com.vaibhav.moneytracker.csv.DuplicateConfidence
+import com.vaibhav.moneytracker.csv.DuplicateDetector
 import com.vaibhav.moneytracker.csv.PDFStatementParser
 import com.vaibhav.moneytracker.csv.PDFTransactionCandidate
 import com.vaibhav.moneytracker.csv.StatementFormatDetector
@@ -25,7 +27,8 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
         val readyToImport: Int = 0,
         val needsReview: Int = 0,
         val ignoredCount: Int = 0,
-        val infoCount: Int = 0
+        val infoCount: Int = 0,
+        val duplicateCount: Int = 0
     )
 
     data class StatementBalances(
@@ -66,6 +69,10 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
         val isValid: Boolean,
         val isAmbiguous: Boolean = false,
         val isStatementInfo: Boolean = false,
+        val isDuplicate: Boolean = false,
+        val duplicateConfidence: DuplicateConfidence = DuplicateConfidence.UNIQUE,
+        val matchReason: String? = null,
+        val isUserOverridden: Boolean = false,
         val error: String? = null
     )
 
@@ -80,7 +87,7 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
 
     /**
      * Entry point to load a statement (CSV or PDF).
-     * Automatically attempts to parse, normalize, apply Smart Rules, and present Preview.
+     * Automatically attempts to parse, normalize, apply Smart Rules, run Duplicate Detection, and present Preview.
      */
     fun loadStatement(
         context: Context,
@@ -181,10 +188,17 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
         val accountName = defaultAccount?.name ?: "Main Account"
         val accountId = defaultAccount?.id ?: 1L
 
+        // Pre-fetch existing database transactions in statement range for fast deduplication
+        val validDates = candidates.mapNotNull { CSVParser.parseDate(it.rawDate) }
+        val minDate = (validDates.minOrNull() ?: System.currentTimeMillis()) - 2 * 24 * 3600 * 1000L
+        val maxDate = (validDates.maxOrNull() ?: System.currentTimeMillis()) + 2 * 24 * 3600 * 1000L
+        val existingDbTxs = repository.getTransactionsInRange(accountId, minDate, maxDate)
+
         var readyCount = 0
         var needsReviewCount = 0
         var ignoredCount = 0
         var infoCount = 0
+        var duplicateCount = 0
 
         var openingBalPaise: Long? = null
         var closingBalPaise: Long? = null
@@ -247,12 +261,6 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
                 "General"
             }
 
-            if (candidate.isAmbiguous) {
-                needsReviewCount++
-            } else {
-                readyCount++
-            }
-
             val entity = createBaseEntity(
                 title = candidate.narration,
                 category = finalCategoryName,
@@ -264,12 +272,39 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
                 categoryId = finalCategoryId
             )
 
+            // Run Duplicate Detection Engine
+            val dupMatch = DuplicateDetector.detectDuplicate(entity, existingDbTxs)
+            val isHighConf = dupMatch.confidence == DuplicateConfidence.HIGH_CONFIDENCE_DUPLICATE
+            val isPoss = dupMatch.confidence == DuplicateConfidence.POSSIBLE_DUPLICATE
+            val isDup = isHighConf || isPoss
+
+            val isValidItem = if (isHighConf) false else true
+            val isAmbiguousItem = candidate.isAmbiguous || isPoss
+
+            if (isDup) duplicateCount++
+
+            if (!isValidItem || isAmbiguousItem) {
+                needsReviewCount++
+            } else {
+                readyCount++
+            }
+
+            val errorMsg = when {
+                isHighConf -> "High-confidence duplicate (Skipped): ${dupMatch.matchReason}"
+                isPoss -> "Possible duplicate — Verify: ${dupMatch.matchReason}"
+                else -> null
+            }
+
             previewItems.add(
                 ImportPreviewItem(
                     transaction = entity,
                     tags = matchedTags,
-                    isValid = true,
-                    isAmbiguous = candidate.isAmbiguous
+                    isValid = isValidItem,
+                    isAmbiguous = isAmbiguousItem,
+                    isDuplicate = isDup,
+                    duplicateConfidence = dupMatch.confidence,
+                    matchReason = dupMatch.matchReason,
+                    error = errorMsg
                 )
             )
         }
@@ -280,7 +315,8 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
             readyToImport = readyCount,
             needsReview = needsReviewCount,
             ignoredCount = ignoredCount,
-            infoCount = infoCount
+            infoCount = infoCount,
+            duplicateCount = duplicateCount
         )
 
         val balances = StatementBalances(
@@ -361,11 +397,20 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
         var needsReviewCount = 0
         var ignoredCount = 0
         var infoCount = 0
+        var duplicateCount = 0
 
         var openingBalPaise: Long? = null
         var closingBalPaise: Long? = null
 
         val previewItems = mutableListOf<ImportPreviewItem>()
+
+        // Pre-fetch DB transactions in statement range for fast deduplication
+        val validDates = rows.mapNotNull { row ->
+            row.firstNotNullOfOrNull { CSVParser.parseDate(it) }
+        }
+        val minDate = (validDates.minOrNull() ?: System.currentTimeMillis()) - 2 * 24 * 3600 * 1000L
+        val maxDate = (validDates.maxOrNull() ?: System.currentTimeMillis()) + 2 * 24 * 3600 * 1000L
+        val existingDbTxs = repository.getTransactionsInRange(accountId, minDate, maxDate)
 
         rows.forEach { row ->
             val titleCandidate = detected.titleIndex?.let { row.getOrNull(it) }?.trim()?.takeIf { it.isNotBlank() }
@@ -487,14 +532,6 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
                         t.contains("[cr]") || t.contains("(cr)") || t.contains("credit")
                     })
 
-            val isAmbiguous = !hasExplicitDirection
-
-            if (isAmbiguous) {
-                needsReviewCount++
-            } else {
-                readyCount++
-            }
-
             val entity = createBaseEntity(
                 title = titleCandidate,
                 category = finalCategoryName,
@@ -506,12 +543,39 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
                 categoryId = finalCategoryId
             )
 
+            // Run Duplicate Detection Engine
+            val dupMatch = DuplicateDetector.detectDuplicate(entity, existingDbTxs)
+            val isHighConf = dupMatch.confidence == DuplicateConfidence.HIGH_CONFIDENCE_DUPLICATE
+            val isPoss = dupMatch.confidence == DuplicateConfidence.POSSIBLE_DUPLICATE
+            val isDup = isHighConf || isPoss
+
+            val isValidItem = if (isHighConf) false else true
+            val isAmbiguousItem = (!hasExplicitDirection) || isPoss
+
+            if (isDup) duplicateCount++
+
+            if (!isValidItem || isAmbiguousItem) {
+                needsReviewCount++
+            } else {
+                readyCount++
+            }
+
+            val errorMsg = when {
+                isHighConf -> "High-confidence duplicate (Skipped): ${dupMatch.matchReason}"
+                isPoss -> "Possible duplicate — Verify: ${dupMatch.matchReason}"
+                else -> null
+            }
+
             previewItems.add(
                 ImportPreviewItem(
                     transaction = entity,
                     tags = matchedTags,
-                    isValid = true,
-                    isAmbiguous = isAmbiguous
+                    isValid = isValidItem,
+                    isAmbiguous = isAmbiguousItem,
+                    isDuplicate = isDup,
+                    duplicateConfidence = dupMatch.confidence,
+                    matchReason = dupMatch.matchReason,
+                    error = errorMsg
                 )
             )
         }
@@ -522,7 +586,8 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
             readyToImport = readyCount,
             needsReview = needsReviewCount,
             ignoredCount = ignoredCount,
-            infoCount = infoCount
+            infoCount = infoCount,
+            duplicateCount = duplicateCount
         )
 
         val balances = StatementBalances(
@@ -538,6 +603,27 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
                 rawHeaders = headers,
                 rawRows = rows
             )
+        }
+    }
+
+    fun toggleImportAnyway(index: Int) {
+        val currentState = _state.value
+        if (currentState is ImportState.Preview) {
+            val newList = currentState.items.toMutableList()
+            if (index in newList.indices) {
+                val item = newList[index]
+                val newOverrideState = !item.isUserOverridden
+                val newValidState = if (newOverrideState) true else (item.duplicateConfidence != DuplicateConfidence.HIGH_CONFIDENCE_DUPLICATE && item.transaction.amountPaise > 0L)
+
+                newList[index] = item.copy(
+                    isUserOverridden = newOverrideState,
+                    isValid = newValidState,
+                    isAmbiguous = if (newOverrideState) false else item.isAmbiguous,
+                    error = if (newOverrideState) null else item.error
+                )
+
+                recalculateCountsAndUpdateState(currentState, newList)
+            }
         }
     }
 
@@ -584,13 +670,13 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
                     "Ready" -> {
                         val canBeReady = current.transaction.createdAt > 0L && current.transaction.amountPaise > 0L
                         if (canBeReady) {
-                            current.copy(isValid = true, isAmbiguous = false, isStatementInfo = false, error = null)
+                            current.copy(isValid = true, isAmbiguous = false, isStatementInfo = false, isUserOverridden = true, error = null)
                         } else {
                             current.copy(isValid = false, isAmbiguous = true, isStatementInfo = false, error = "Date or amount missing for Ready")
                         }
                     }
                     "Review" -> current.copy(isValid = false, isAmbiguous = true, isStatementInfo = false, error = current.error ?: "User flagged for review")
-                    "Ignored" -> current.copy(isValid = false, isAmbiguous = false, isStatementInfo = false, error = "Ignored by user")
+                    "Ignored" -> current.copy(isValid = false, isAmbiguous = false, isStatementInfo = false, isUserOverridden = false, error = "Ignored by user")
                     "Info" -> current.copy(isValid = false, isAmbiguous = false, isStatementInfo = true, error = "Moved to Statement Info")
                     else -> current
                 }
@@ -617,6 +703,7 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
         val needsReviewCount = newList.count { (!it.isValid || it.isAmbiguous) && !it.isStatementInfo }
         val ignoredCount = newList.count { !it.isValid && !it.isAmbiguous && !it.isStatementInfo }
         val infoCount = newList.count { it.isStatementInfo }
+        val dupCount = newList.count { it.isDuplicate }
 
         val totalTransactions = readyCount + needsReviewCount + ignoredCount
         val updatedCounts = currentState.counts.copy(
@@ -624,7 +711,8 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
             readyToImport = readyCount,
             needsReview = needsReviewCount,
             ignoredCount = ignoredCount,
-            infoCount = infoCount
+            infoCount = infoCount,
+            duplicateCount = dupCount
         )
 
         _state.value = currentState.copy(items = newList, counts = updatedCounts)

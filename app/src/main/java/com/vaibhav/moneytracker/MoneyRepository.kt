@@ -15,6 +15,14 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
 
     fun getAllAccounts(): Flow<List<AccountEntity>> = db.accountDao().getAllIncludingInactiveFlow()
 
+    suspend fun getTransactionsInRange(accountId: Long?, startDate: Long, endDate: Long): List<TransactionEntity> {
+        return if (accountId != null && accountId > 0L) {
+            db.transactionDao().getTransactionsInRange(accountId, startDate, endDate)
+        } else {
+            db.transactionDao().getTransactionsInDateRange(startDate, endDate)
+        }
+    }
+
     fun getCategories(): Flow<List<CategoryEntity>> = db.categoryDao().getAllActiveFlow()
 
     fun getTags(): Flow<List<TagEntity>> = db.tagDao().getAllActiveFlow()

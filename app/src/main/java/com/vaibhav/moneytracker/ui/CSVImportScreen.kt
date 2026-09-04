@@ -130,6 +130,7 @@ fun CSVImportScreen(
                         onItemChange = { index, tx, tags -> viewModel.updatePreviewItem(index, tx, tags) },
                         onReclassifyItem = { index, cat -> viewModel.reclassifyItem(index, cat) },
                         onRemoveItem = { index -> viewModel.removePreviewItem(index) },
+                        onToggleImportAnyway = { index -> viewModel.toggleImportAnyway(index) },
                         onImport = { viewModel.performImport() },
                         onBack = { viewModel.reset() },
                         onSwitchToAdvanced = { viewModel.switchToAdvancedMapping() }
@@ -335,6 +336,7 @@ fun PreviewStep(
     onItemChange: (Int, TransactionEntity, List<TagEntity>) -> Unit,
     onReclassifyItem: (Int, String) -> Unit,
     onRemoveItem: (Int) -> Unit,
+    onToggleImportAnyway: (Int) -> Unit,
     onImport: () -> Unit,
     onBack: () -> Unit,
     onSwitchToAdvanced: () -> Unit
@@ -619,7 +621,35 @@ fun PreviewStep(
                                 }
                             }
 
-                            if (previewItem.isAmbiguous) {
+                            if (previewItem.isDuplicate) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 6.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = previewItem.error ?: "⚠️ Duplicate match (${previewItem.matchReason})",
+                                        color = if (previewItem.isUserOverridden) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text(
+                                        text = if (previewItem.isUserOverridden) "✓ Import Anyway" else "Import Anyway",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (previewItem.isUserOverridden) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .clickable { onToggleImportAnyway(index) }
+                                            .background(
+                                                color = if (previewItem.isUserOverridden) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer,
+                                                shape = RoundedCornerShape(4.dp)
+                                            )
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            } else if (previewItem.isAmbiguous) {
                                 Text(
                                     text = "⚠️ Single amount detected — verify direction",
                                     color = MaterialTheme.colorScheme.tertiary,
@@ -628,7 +658,7 @@ fun PreviewStep(
                                 )
                             }
 
-                            if (!previewItem.isValid) {
+                            if (!previewItem.isValid && !previewItem.isDuplicate) {
                                 Text(
                                     text = previewItem.error ?: "Invalid row",
                                     color = if (previewItem.isStatementInfo) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,

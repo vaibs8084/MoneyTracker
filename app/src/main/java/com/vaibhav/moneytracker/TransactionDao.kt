@@ -37,6 +37,23 @@ interface TransactionDao {
     ): TransactionEntity?
 
     @Query(
+        "SELECT * FROM transactions WHERE accountId = :accountId AND createdAt BETWEEN :startDate AND :endDate ORDER BY createdAt DESC"
+    )
+    suspend fun getTransactionsInRange(
+        accountId: Long,
+        startDate: Long,
+        endDate: Long
+    ): List<TransactionEntity>
+
+    @Query(
+        "SELECT * FROM transactions WHERE createdAt BETWEEN :startDate AND :endDate ORDER BY createdAt DESC"
+    )
+    suspend fun getTransactionsInDateRange(
+        startDate: Long,
+        endDate: Long
+    ): List<TransactionEntity>
+
+    @Query(
         "DELETE FROM transactions"
     )
     suspend fun deleteAll()
