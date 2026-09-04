@@ -72,6 +72,7 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
         val isDuplicate: Boolean = false,
         val duplicateConfidence: DuplicateConfidence = DuplicateConfidence.UNIQUE,
         val matchReason: String? = null,
+        val matchedExistingTransaction: TransactionEntity? = null,
         val isUserOverridden: Boolean = false,
         val error: String? = null
     )
@@ -289,9 +290,12 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
                 readyCount++
             }
 
+            val matchedTx = dupMatch.matchedTransaction
             val errorMsg = when {
-                isHighConf -> "High-confidence duplicate (Skipped): ${dupMatch.matchReason}"
-                isPoss -> "Possible duplicate — Verify: ${dupMatch.matchReason}"
+                isHighConf && matchedTx != null -> "🔴 Already in app: Matches '${matchedTx.title}' (${formatDate(matchedTx.createdAt)})"
+                isHighConf -> "🔴 Already in app (High-confidence duplicate)"
+                isPoss && matchedTx != null -> "⚠️ Possible duplicate: Matches '${matchedTx.title}' (${formatDate(matchedTx.createdAt)})"
+                isPoss -> "⚠️ Possible duplicate — Verify direction or match"
                 else -> null
             }
 
@@ -304,6 +308,7 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
                     isDuplicate = isDup,
                     duplicateConfidence = dupMatch.confidence,
                     matchReason = dupMatch.matchReason,
+                    matchedExistingTransaction = dupMatch.matchedTransaction,
                     error = errorMsg
                 )
             )
@@ -560,9 +565,12 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
                 readyCount++
             }
 
+            val matchedTx = dupMatch.matchedTransaction
             val errorMsg = when {
-                isHighConf -> "High-confidence duplicate (Skipped): ${dupMatch.matchReason}"
-                isPoss -> "Possible duplicate — Verify: ${dupMatch.matchReason}"
+                isHighConf && matchedTx != null -> "🔴 Already in app: Matches '${matchedTx.title}' (${formatDate(matchedTx.createdAt)})"
+                isHighConf -> "🔴 Already in app (High-confidence duplicate)"
+                isPoss && matchedTx != null -> "⚠️ Possible duplicate: Matches '${matchedTx.title}' (${formatDate(matchedTx.createdAt)})"
+                isPoss -> "⚠️ Possible duplicate — Verify direction or match"
                 else -> null
             }
 
@@ -575,6 +583,7 @@ class CSVImportViewModel(private val repository: MoneyRepository) : ViewModel() 
                     isDuplicate = isDup,
                     duplicateConfidence = dupMatch.confidence,
                     matchReason = dupMatch.matchReason,
+                    matchedExistingTransaction = dupMatch.matchedTransaction,
                     error = errorMsg
                 )
             )

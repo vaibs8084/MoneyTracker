@@ -25,6 +25,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vaibhav.moneytracker.*
+import com.vaibhav.moneytracker.csv.DuplicateConfidence
 import com.vaibhav.moneytracker.csv.ParsedCSV
 
 @Composable
@@ -622,32 +623,44 @@ fun PreviewStep(
                             }
 
                             if (previewItem.isDuplicate) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 6.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = previewItem.error ?: "⚠️ Duplicate match (${previewItem.matchReason})",
-                                        color = if (previewItem.isUserOverridden) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Text(
-                                        text = if (previewItem.isUserOverridden) "✓ Import Anyway" else "Import Anyway",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (previewItem.isUserOverridden) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier
-                                            .clickable { onToggleImportAnyway(index) }
-                                            .background(
-                                                color = if (previewItem.isUserOverridden) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer,
-                                                shape = RoundedCornerShape(4.dp)
-                                            )
-                                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                                    )
+                                val matchedTx = previewItem.matchedExistingTransaction
+                                Column(modifier = Modifier.padding(top = 6.dp)) {
+                                    if (matchedTx != null) {
+                                        Text(
+                                            text = "Existing: ${formatRupees(matchedTx.amountPaise)} • ${matchedTx.title} • ${formatDate(matchedTx.createdAt)}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = previewItem.error ?: "⚠️ Duplicate match (${previewItem.matchReason})",
+                                            color = if (previewItem.isUserOverridden) MaterialTheme.colorScheme.primary
+                                                    else if (previewItem.duplicateConfidence == DuplicateConfidence.HIGH_CONFIDENCE_DUPLICATE) MaterialTheme.colorScheme.error
+                                                    else MaterialTheme.colorScheme.tertiary,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Text(
+                                            text = if (previewItem.isUserOverridden) "✓ Import Anyway" else "Import Anyway",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (previewItem.isUserOverridden) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier
+                                                .clickable { onToggleImportAnyway(index) }
+                                                .background(
+                                                    color = if (previewItem.isUserOverridden) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer,
+                                                    shape = RoundedCornerShape(4.dp)
+                                                )
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        )
+                                    }
                                 }
                             } else if (previewItem.isAmbiguous) {
                                 Text(
