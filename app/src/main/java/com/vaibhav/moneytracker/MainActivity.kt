@@ -150,6 +150,7 @@ fun MoneyTrackerApp(
     val smartRules by viewModel.smartRules.collectAsState()
     val financialPosition by viewModel.financialPosition.collectAsState()
     val selectedPeriod by viewModel.selectedPeriod.collectAsState()
+    val duplicateWarning by viewModel.duplicateWarning.collectAsState()
 
     // Suggestions remain calculated on the fly or we can move them to VM
     val recurringSuggestions = remember {
@@ -178,8 +179,17 @@ fun MoneyTrackerApp(
         }
     }
 
+    // Close the Add Transaction screen exactly when a save succeeds (either
+    // direct insert or confirmed "Save Anyway" after a duplicate warning).
+    LaunchedEffect(viewModel) {
+        viewModel.transactionSaved.collect {
+            showAddTransaction = false
+        }
+    }
+
 
     /* EDIT */
+
 
     if (editingTransaction != null) {
 
@@ -249,6 +259,35 @@ fun MoneyTrackerApp(
 
     if (showAddTransaction) {
 
+        // Show a confirmation dialog when a potential duplicate is detected.
+        // The dialog sits on top of AddTransactionScreen because it is rendered
+        // before the return, so both are in the composition tree simultaneously.
+        val warning = duplicateWarning
+        if (warning != null) {
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissDuplicateWarning() },
+                title = { Text("Possible Duplicate") },
+                text = {
+                    Text(
+                        "A similar transaction was already recorded today:\n\n" +
+                        "\"${warning.existingTransaction.title}\"" +
+                        "  —  ${formatRupees(warning.existingTransaction.amountPaise)}\n\n" +
+                        "Do you still want to save this transaction?"
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = { viewModel.saveTransactionAnyway() }) {
+                        Text("Save Anyway")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissDuplicateWarning() }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
         AddTransactionScreen(
 
             accounts =
@@ -263,17 +302,19 @@ fun MoneyTrackerApp(
             rules =
                 smartRules,
 
-            confirmedSubscriptions = 
+            confirmedSubscriptions =
                 confirmedSubscriptions,
 
             onBack = {
+                // Clear any pending duplicate warning before closing the screen.
+                viewModel.dismissDuplicateWarning()
                 showAddTransaction = false
             },
 
             onSave = { transaction, txTags ->
-
+                // Do NOT close the screen here. The screen closes via the
+                // transactionSaved LaunchedEffect once the insert succeeds.
                 viewModel.addTransaction(transaction, txTags)
-                showAddTransaction = false
             }
         )
 

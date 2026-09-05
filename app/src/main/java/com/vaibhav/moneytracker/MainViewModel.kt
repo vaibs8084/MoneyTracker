@@ -65,10 +65,71 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
         _selectedPeriod.value = period
     }
 
+    /**
+     * Holds a transaction that is pending user confirmation after a potential
+     * duplicate was detected. The UI observes [duplicateWarning] to show a
+     * warning dialog before committing the insert.
+     */
+    data class DuplicateWarning(
+        val pendingTransaction: TransactionEntity,
+        val pendingTags: List<TagEntity>,
+        val existingTransaction: TransactionEntity
+    )
+
+    private val _duplicateWarning = MutableStateFlow<DuplicateWarning?>(null)
+
+    /**
+     * Non-null when [addTransaction] detected a potential duplicate.
+     * The UI must display a confirmation dialog and call either
+     * [saveTransactionAnyway] or [dismissDuplicateWarning].
+     */
+    val duplicateWarning: StateFlow<DuplicateWarning?> = _duplicateWarning.asStateFlow()
+
+    /**
+     * One-shot event emitted after a transaction is successfully inserted.
+     * The UI collects this to close the Add Transaction screen.
+     */
+    private val _transactionSaved = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val transactionSaved: SharedFlow<Unit> = _transactionSaved.asSharedFlow()
+
+    // Prevents a second addTransaction() call from being processed while the
+    // first is in-flight. Set and cleared on Dispatchers.Main only.
+    private var isSaving = false
+
     fun addTransaction(transaction: TransactionEntity, tags: List<TagEntity>) {
+        if (isSaving) return
+        isSaving = true
         viewModelScope.launch {
-            repository.insertTransaction(transaction, tags)
+            try {
+                when (val result = repository.insertTransactionChecked(transaction, tags)) {
+                    is MoneyRepository.InsertTransactionResult.Inserted -> {
+                        _transactionSaved.emit(Unit)
+                    }
+                    is MoneyRepository.InsertTransactionResult.DuplicateDetected -> {
+                        _duplicateWarning.value = DuplicateWarning(
+                            transaction, tags, result.existing
+                        )
+                    }
+                }
+            } finally {
+                isSaving = false
+            }
         }
+    }
+
+    /** Proceeds with the insert for a transaction that triggered a duplicate warning. */
+    fun saveTransactionAnyway() {
+        val warning = _duplicateWarning.value ?: return
+        _duplicateWarning.value = null
+        viewModelScope.launch {
+            repository.insertTransaction(warning.pendingTransaction, warning.pendingTags)
+            _transactionSaved.emit(Unit)
+        }
+    }
+
+    /** Discards the pending duplicate warning without inserting anything. */
+    fun dismissDuplicateWarning() {
+        _duplicateWarning.value = null
     }
 
     fun updateTransaction(transaction: TransactionEntity, tags: List<TagEntity>) {

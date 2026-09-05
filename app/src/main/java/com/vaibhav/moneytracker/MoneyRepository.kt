@@ -89,6 +89,52 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
         }
     }
 
+    /**
+     * Atomically checks for a potential duplicate and, if none exists, inserts
+     * the transaction — all within a single SQLite write transaction.
+     *
+     * Room's [db.withTransaction] acquires the database write lock for the entire
+     * block. Concurrent callers are serialised by SQLite: the second caller's
+     * duplicate-check read sees the first caller's committed row, preventing a
+     * double-insert race condition.
+     *
+     * Returns [InsertTransactionResult.Inserted] on success, or
+     * [InsertTransactionResult.DuplicateDetected] when a matching transaction
+     * already exists on the same calendar day.
+     *
+     * Transfer transactions (where [TransactionEntity.accountId] is null) bypass
+     * the duplicate check and are always inserted.
+     */
+    suspend fun insertTransactionChecked(
+        transaction: TransactionEntity,
+        tags: List<TagEntity>
+    ): InsertTransactionResult = db.withTransaction {
+        val accountId = transaction.accountId
+        val existing = if (accountId != null) {
+            val dayStart = calendarDayStart(transaction.createdAt)
+            val dayEnd = dayStart + 24L * 60 * 60 * 1_000 - 1L
+            db.transactionDao().findPotentialDuplicateOnDay(
+                title = transaction.title,
+                amountPaise = transaction.amountPaise,
+                accountId = accountId,
+                accountName = transaction.account,
+                dayStart = dayStart,
+                dayEnd = dayEnd
+            )
+        } else {
+            null
+        }
+        if (existing != null) {
+            InsertTransactionResult.DuplicateDetected(existing)
+        } else {
+            val id = db.transactionDao().insert(transaction)
+            tags.distinctBy { it.id }.forEach { tag ->
+                db.transactionDao().insertTagRef(TransactionTagCrossRef(id, tag.id))
+            }
+            InsertTransactionResult.Inserted(id)
+        }
+    }
+
     suspend fun updateTransaction(transaction: TransactionEntity, tags: List<TagEntity>) {
         db.withTransaction {
             db.transactionDao().update(transaction)
@@ -101,6 +147,43 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
 
     suspend fun deleteTransaction(transaction: TransactionEntity) {
         db.transactionDao().delete(transaction)
+    }
+
+    /**
+     * Checks whether a near-identical transaction already exists for the same
+     * calendar day as [transaction].
+     *
+     * Matching criteria: same title, same amountPaise, same account (by accountId
+     * FK or by legacy account name), recorded on the same calendar day.
+     *
+     * Returns the matching [TransactionEntity] when a potential duplicate is found,
+     * or null when no match exists.
+     *
+     * Transfer transactions are excluded because their accountId is always null;
+     * the from/to accounts are tracked separately for them.
+     */
+    suspend fun findPotentialDuplicate(transaction: TransactionEntity): TransactionEntity? {
+        val accountId = transaction.accountId ?: return null
+        val dayStart = calendarDayStart(transaction.createdAt)
+        val dayEnd = dayStart + 24L * 60 * 60 * 1_000 - 1L
+        return db.transactionDao().findPotentialDuplicateOnDay(
+            title = transaction.title,
+            amountPaise = transaction.amountPaise,
+            accountId = accountId,
+            accountName = transaction.account,
+            dayStart = dayStart,
+            dayEnd = dayEnd
+        )
+    }
+
+    private fun calendarDayStart(timestampMs: Long): Long {
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = timestampMs
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
     }
 
     suspend fun deleteTransactions(ids: List<Long>) {
@@ -234,4 +317,10 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
     }
 
     data class ImportResult(val imported: Int, val duplicates: Int)
+
+    /** Result of [insertTransactionChecked]. */
+    sealed class InsertTransactionResult {
+        data class Inserted(val id: Long) : InsertTransactionResult()
+        data class DuplicateDetected(val existing: TransactionEntity) : InsertTransactionResult()
+    }
 }

@@ -58,6 +58,34 @@ interface TransactionDao {
     )
     suspend fun deleteAll()
 
+    /**
+     * Returns the first transaction that matches [title], [amountPaise], and either
+     * [accountId] (FK-linked) or [accountName] (legacy display string), recorded on
+     * the same calendar day defined by [[dayStart], [dayEnd]].
+     *
+     * Used for duplicate detection before a manual insert. Returns null when no
+     * matching transaction is found.
+     */
+    @Query(
+        """
+        SELECT * FROM transactions
+        WHERE title = :title
+        AND amountPaise = :amountPaise
+        AND (accountId = :accountId OR account = :accountName)
+        AND createdAt >= :dayStart
+        AND createdAt <= :dayEnd
+        LIMIT 1
+        """
+    )
+    suspend fun findPotentialDuplicateOnDay(
+        title: String,
+        amountPaise: Long,
+        accountId: Long,
+        accountName: String,
+        dayStart: Long,
+        dayEnd: Long
+    ): TransactionEntity?
+
     /*
      * Only real personal income.
      */
