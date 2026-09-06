@@ -14,6 +14,13 @@ ksp = "2.3.6"
 room = "2.8.4"
 coroutines = "1.10.2"
 pdfboxAndroid = "2.0.27.0"
+playServicesAuth = "21.2.0"
+credentials = "1.3.0"
+googleid = "1.1.1"
+googleApiClient = "2.6.0"
+googleApiDrive = "v3-rev20230822-2.0.0"
+googleApiSheets = "v4-rev20230815-2.0.0"
+googleHttpClientGson = "1.43.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -56,6 +63,19 @@ androidx-room-compiler = { group = "androidx.room", name = "room-compiler", vers
 
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfboxAndroid" }
+
+# Google Auth & Credentials Foundation
+play-services-auth = { module = "com.google.android.gms:play-services-auth", version.ref = "playServicesAuth" }
+credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
+credentials-play-services-auth = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "credentials" }
+googleid = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "googleid" }
+
+# Google Drive & Sheets REST API Foundation
+google-apiclient = { module = "com.google.api-client:google-api-client-android", version.ref = "googleApiClient" }
+google-apidrive = { module = "com.google.apis:google-api-services-drive", version.ref = "googleApiDrive" }
+google-apisheets = { module = "com.google.apis:google-api-services-sheets", version.ref = "googleApiSheets" }
+google-http-client-gson = { module = "com.google.http-client:google-http-client-gson", version.ref = "googleHttpClientGson" }
+google-http-client-android = { module = "com.google.http-client:google-http-client-android", version.ref = "googleHttpClientGson" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -5,12 +5,40 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+@Volatile
+var defaultCurrencySymbol: String = "₹"
+
+@Volatile
+var defaultShowDecimals: Boolean = true
+
 /**
- * Formats a paise amount into a rupee string (e.g., ₹500.00, ₹2,000.00).
+ * Formats a paise amount into a localized currency string using exact Long integer arithmetic.
+ * Never converts stored paise to Float or Double.
+ * Supports positive, zero, and negative amounts, thousands grouping, custom currency symbols,
+ * and optional decimal visibility.
+ */
+fun formatCurrency(
+    amountPaise: Long,
+    currencySymbol: String = defaultCurrencySymbol,
+    showDecimals: Boolean = defaultShowDecimals
+): String {
+    val isNegative = amountPaise < 0L
+    val absPaise = Math.abs(amountPaise)
+    val majorUnits = absPaise / 100L
+    val minorUnits = absPaise % 100L
+
+    val formattedMajor = String.format(Locale.US, "%,d", majorUnits)
+    val decimalPart = if (showDecimals) String.format(Locale.US, ".%02d", minorUnits) else ""
+    val sign = if (isNegative) "-" else ""
+
+    return "$sign$currencySymbol$formattedMajor$decimalPart"
+}
+
+/**
+ * Backwards-compatible rupee formatter delegate.
  */
 fun formatRupees(amountPaise: Long): String {
-    val rupees = amountPaise / 100.0
-    return String.format(Locale.US, "₹%,.2f", rupees)
+    return formatCurrency(amountPaise, defaultCurrencySymbol, defaultShowDecimals)
 }
 
 /**

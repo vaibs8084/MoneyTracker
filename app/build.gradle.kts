@@ -39,6 +39,20 @@ android {
         compose = true
     }
 
+    packaging {
+        resources {
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/LICENSE"
+            excludes += "META-INF/LICENSE.txt"
+            excludes += "META-INF/license.txt"
+            excludes += "META-INF/NOTICE"
+            excludes += "META-INF/NOTICE.txt"
+            excludes += "META-INF/notice.txt"
+            excludes += "META-INF/ASL2.0"
+            excludes += "META-INF/INDEX.LIST"
+        }
+    }
+
     testOptions {
         execution = "ANDROID_TEST_ORCHESTRATOR"
     }
@@ -109,6 +123,44 @@ dependencies {
     // PDFBox for PDF statement parsing
     implementation(
         libs.pdfbox.android
+    )
+
+    // Google Auth & Credentials Foundation
+    implementation(
+        libs.play.services.auth
+    )
+
+    implementation(
+        libs.credentials
+    )
+
+    implementation(
+        libs.credentials.play.services.auth
+    )
+
+    implementation(
+        libs.googleid
+    )
+
+    // Google Drive & Sheets REST API Foundation
+    implementation(
+        libs.google.apiclient
+    )
+
+    implementation(
+        libs.google.apidrive
+    )
+
+    implementation(
+        libs.google.apisheets
+    )
+
+    implementation(
+        libs.google.http.client.gson
+    )
+
+    implementation(
+        libs.google.http.client.android
     )
 
     // Tests

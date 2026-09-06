@@ -9,6 +9,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 import com.vaibhav.moneytracker.capture.CapturedTransactionDao
 import com.vaibhav.moneytracker.capture.CapturedTransactionEntity
+import com.vaibhav.moneytracker.cloud.SyncLogDao
+import com.vaibhav.moneytracker.cloud.SyncLogEntity
 
 @Database(
     entities = [
@@ -22,9 +24,10 @@ import com.vaibhav.moneytracker.capture.CapturedTransactionEntity
         GoalEntity::class,
         CategorizationRuleEntity::class,
         RuleTagCrossRef::class,
-        CapturedTransactionEntity::class
+        CapturedTransactionEntity::class,
+        SyncLogEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class MoneyTrackerDatabase : RoomDatabase() {
@@ -46,6 +49,8 @@ abstract class MoneyTrackerDatabase : RoomDatabase() {
     abstract fun categorizationRuleDao(): CategorizationRuleDao
 
     abstract fun capturedTransactionDao(): CapturedTransactionDao
+
+    abstract fun syncLogDao(): SyncLogDao
 
 
     companion object {
@@ -319,6 +324,27 @@ abstract class MoneyTrackerDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Migration from database version 7 → 8.
+         * Creates sync_logs table for offline cloud sync tracking.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS sync_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        entityType TEXT NOT NULL,
+                        entityId INTEGER NOT NULL,
+                        secondaryId INTEGER,
+                        action TEXT NOT NULL,
+                        timestampMs INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
 
         fun getInstance(
             context: Context
@@ -341,7 +367,8 @@ abstract class MoneyTrackerDatabase : RoomDatabase() {
                         MIGRATION_3_4,
                         MIGRATION_4_5,
                         MIGRATION_5_6,
-                        MIGRATION_6_7
+                        MIGRATION_6_7,
+                        MIGRATION_7_8
                     )
                     .build()
                     .also {

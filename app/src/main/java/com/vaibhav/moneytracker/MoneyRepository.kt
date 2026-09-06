@@ -16,6 +16,24 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
 
     fun getAllAccounts(): Flow<List<AccountEntity>> = db.accountDao().getAllIncludingInactiveFlow()
 
+    @Volatile
+    var isSyncSuppressed: Boolean = false
+
+    suspend fun <T> withSyncSuppressed(block: suspend () -> T): T {
+        isSyncSuppressed = true
+        return try {
+            block()
+        } finally {
+            isSyncSuppressed = false
+        }
+    }
+
+    suspend fun <T> executeInTransaction(block: suspend () -> T): T {
+        return db.withTransaction {
+            block()
+        }
+    }
+
     // Captured Transactions (Capture Inbox)
     fun getPendingCapturesFlow(): Flow<List<CapturedTransactionEntity>> =
         db.capturedTransactionDao().getPendingCapturesFlow()

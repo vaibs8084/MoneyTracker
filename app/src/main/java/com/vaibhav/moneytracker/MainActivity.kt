@@ -2,7 +2,9 @@ package com.vaibhav.moneytracker
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import com.vaibhav.moneytracker.ui.AccountSelectionList
 import com.vaibhav.moneytracker.ui.BalanceMiniStatPlain
 import com.vaibhav.moneytracker.ui.ClassificationChoiceCard
@@ -12,6 +14,7 @@ import com.vaibhav.moneytracker.ui.SelectionChip
 import com.vaibhav.moneytracker.ui.TransactionRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +44,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import com.vaibhav.moneytracker.ui.ProfileScreen
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -63,7 +67,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.Scope
+import com.vaibhav.moneytracker.auth.AuthManager
+import com.vaibhav.moneytracker.auth.OnboardingStatus
+import com.vaibhav.moneytracker.auth.OnboardingViewModel
+import com.vaibhav.moneytracker.cloud.CloudSpreadsheetManager
+import com.vaibhav.moneytracker.cloud.GoogleSheetsRepository
+import com.vaibhav.moneytracker.cloud.SyncEngine
+import com.vaibhav.moneytracker.cloud.SyncStatus
+import com.vaibhav.moneytracker.cloud.SyncUiState
+import com.vaibhav.moneytracker.cloud.SyncViewModel
+import com.vaibhav.moneytracker.preferences.ThemeMode
+import com.vaibhav.moneytracker.preferences.UserPreferencesManager
 import com.vaibhav.moneytracker.ui.CaptureInboxScreen
+import com.vaibhav.moneytracker.ui.OnboardingScreen
+import com.vaibhav.moneytracker.ui.SettingsScreen
+import com.vaibhav.moneytracker.ui.theme.MoneyTrackerTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -83,9 +105,121 @@ class MainActivity : ComponentActivity() {
         val viewModel = MainViewModel(repository)
         val csvViewModel = CSVImportViewModel(repository)
 
+        val authManager = AuthManager(this)
+        val cloudSpreadsheetManager = CloudSpreadsheetManager(this)
+        val sheetsRepository = GoogleSheetsRepository(this)
+        val syncEngine = SyncEngine(database, repository, sheetsRepository, cloudSpreadsheetManager)
+        val syncViewModel = SyncViewModel(database, syncEngine, authManager.preferenceManager)
+        val onboardingViewModel = OnboardingViewModel(authManager, cloudSpreadsheetManager)
+        val userPreferencesManager = UserPreferencesManager(this)
+
         setContent {
-            MoneyTrackerApp(viewModel, csvViewModel, database)
+            val settingsState by userPreferencesManager.settingsState.collectAsState()
+            val systemInDark = isSystemInDarkTheme()
+            val isDarkTheme = when (settingsState.themeMode) {
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+                ThemeMode.SYSTEM -> systemInDark
+            }
+
+            MoneyTrackerTheme(darkTheme = isDarkTheme) {
+                MoneyTrackerAppRoot(
+                    activity = this,
+                    viewModel = viewModel,
+                    csvViewModel = csvViewModel,
+                    syncViewModel = syncViewModel,
+                    onboardingViewModel = onboardingViewModel,
+                    userPreferencesManager = userPreferencesManager,
+                    authManager = authManager,
+                    database = database
+                )
+            }
         }
+    }
+}
+
+@Composable
+fun MoneyTrackerAppRoot(
+    activity: ComponentActivity,
+    viewModel: MainViewModel,
+    csvViewModel: CSVImportViewModel,
+    syncViewModel: SyncViewModel,
+    onboardingViewModel: OnboardingViewModel,
+    userPreferencesManager: com.vaibhav.moneytracker.preferences.UserPreferencesManager,
+    authManager: AuthManager,
+    database: MoneyTrackerDatabase
+) {
+    val onboardingState by onboardingViewModel.state.collectAsState()
+
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(ApiException::class.java)
+            onboardingViewModel.onGoogleSignInResult(account)
+        } catch (e: Exception) {
+            onboardingViewModel.onGoogleSignInResult(null, error = e.localizedMessage)
+        }
+    }
+
+    val sheetsScopeLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        val hasScope = authManager.hasSheetsScopePermission()
+        onboardingViewModel.onSheetsAuthorizationResult(hasScope)
+    }
+
+    if (onboardingState.status != OnboardingStatus.COMPLETE &&
+        onboardingState.status != OnboardingStatus.GUEST
+    ) {
+        OnboardingScreen(
+            state = onboardingState,
+            onGoogleSignInClick = {
+                onboardingViewModel.startSignIn()
+                val gso = GoogleSignInOptions.Builder(
+                    GoogleSignInOptions.DEFAULT_SIGN_IN
+                )
+                    .requestEmail()
+                    .requestProfile()
+                    .requestScopes(
+                        Scope("https://www.googleapis.com/auth/drive.file"),
+                        Scope("https://www.googleapis.com/auth/spreadsheets")
+                    )
+                    .build()
+                val client = GoogleSignIn.getClient(activity, gso)
+                googleSignInLauncher.launch(client.signInIntent)
+            },
+            onContinueAsGuestClick = {
+                onboardingViewModel.continueAsGuest()
+            },
+            onRequestSheetsScopeClick = {
+                val lastAccount = GoogleSignIn.getLastSignedInAccount(activity)
+                if (lastAccount != null) {
+                    GoogleSignIn.requestPermissions(
+                        activity,
+                        1001,
+                        lastAccount,
+                        Scope("https://www.googleapis.com/auth/drive.file"),
+                        Scope("https://www.googleapis.com/auth/spreadsheets")
+                    )
+                    sheetsScopeLauncher.launch(activity.intent)
+                } else {
+                    onboardingViewModel.retryOnboarding()
+                }
+            },
+            onRetryClick = { onboardingViewModel.retryOnboarding() },
+            onSignOutClick = { onboardingViewModel.signOut() }
+        )
+    } else {
+        MoneyTrackerApp(
+            viewModel = viewModel,
+            csvViewModel = csvViewModel,
+            syncViewModel = syncViewModel,
+            onboardingViewModel = onboardingViewModel,
+            userPreferencesManager = userPreferencesManager,
+            database = database
+        )
     }
 }
 
@@ -104,6 +238,9 @@ class MainActivity : ComponentActivity() {
 fun MoneyTrackerApp(
     viewModel: MainViewModel,
     csvViewModel: CSVImportViewModel,
+    syncViewModel: SyncViewModel,
+    onboardingViewModel: OnboardingViewModel,
+    userPreferencesManager: UserPreferencesManager,
     database: MoneyTrackerDatabase
 ) {
 
@@ -151,6 +288,8 @@ fun MoneyTrackerApp(
     val financialPosition by viewModel.financialPosition.collectAsState()
     val selectedPeriod by viewModel.selectedPeriod.collectAsState()
     val duplicateWarning by viewModel.duplicateWarning.collectAsState()
+    val onboardingState by onboardingViewModel.state.collectAsState()
+    val syncUiState by syncViewModel.syncState.collectAsState()
 
     // Suggestions remain calculated on the fly or we can move them to VM
     val recurringSuggestions = remember {
@@ -506,21 +645,22 @@ fun MoneyTrackerApp(
                 }
 
                 3 -> {
-
                     MoreMenuScreen(
-
-                        modifier =
-                            Modifier.padding(
-                                paddingValues
-                            ),
-
-                        transactions =
-                            transactions,
-
+                        modifier = Modifier.padding(paddingValues),
+                        transactions = transactions,
+                        signedInUserEmail = onboardingState.user?.email,
+                        syncUiState = syncUiState,
+                        onProfileClick = { selectedTab = 15 },
+                        onSettingsClick = { selectedTab = 16 },
+                        onSyncNowClick = {
+                            onboardingState.user?.let { user ->
+                                syncViewModel.performSyncNow(user)
+                            }
+                        },
+                        onSignOutClick = { onboardingViewModel.signOut() },
                         onTransactionClick = {
                             selectedTransaction = it
                         },
-
                         onAccountsClick = {
                             selectedTab = 4
                         },
@@ -695,6 +835,41 @@ fun MoneyTrackerApp(
                         onBack = { selectedTab = 3 }
                     )
                 }
+
+                15 -> {
+                    ProfileScreen(
+                        modifier = Modifier.padding(paddingValues),
+                        user = onboardingState.user,
+                        isGuestMode = onboardingState.status == OnboardingStatus.GUEST,
+                        syncUiState = syncUiState,
+                        onSyncNowClick = {
+                            onboardingState.user?.let { user ->
+                                syncViewModel.performSyncNow(user)
+                            }
+                        },
+                        onConnectGoogleClick = {
+                            onboardingViewModel.signOut()
+                        },
+                        onSignOutClick = {
+                            onboardingViewModel.signOut()
+                        },
+                        onBack = { selectedTab = 3 }
+                    )
+                }
+
+                16 -> {
+                    SettingsScreen(
+                        modifier = Modifier.padding(paddingValues),
+                        userPreferencesManager = userPreferencesManager,
+                        accounts = accounts,
+                        categories = categories,
+                        onNavigateToProfile = { selectedTab = 15 },
+                        onNavigateToImport = { selectedTab = 13 },
+                        onNavigateToCategories = { selectedTab = 5 },
+                        onNavigateToTags = { selectedTab = 6 },
+                        onBack = { selectedTab = 3 }
+                    )
+                }
             }
         }
     }
@@ -709,6 +884,12 @@ fun MoneyTrackerApp(
 fun MoreMenuScreen(
     modifier: Modifier,
     transactions: List<TransactionUiModel>,
+    signedInUserEmail: String? = null,
+    syncUiState: SyncUiState = SyncUiState(),
+    onProfileClick: () -> Unit = {},
+    onSettingsClick: () -> Unit = {},
+    onSyncNowClick: () -> Unit = {},
+    onSignOutClick: (() -> Unit)? = null,
     onTransactionClick: (TransactionUiModel) -> Unit,
     onAccountsClick: () -> Unit,
     onCategoriesClick: () -> Unit,
@@ -735,6 +916,139 @@ fun MoreMenuScreen(
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
             )
+        }
+
+        // Profile & Account Navigation Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onProfileClick() },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = "👤", fontSize = 24.sp)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column {
+                        Text(text = "Profile & Account", fontWeight = FontWeight.Bold)
+                        Text(text = "Manage account, cloud backup, and sync", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+
+        // Settings Navigation Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSettingsClick() },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = "⚙️", fontSize = 24.sp)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column {
+                        Text(text = "Settings", fontWeight = FontWeight.Bold)
+                        Text(text = "Appearance, currency, defaults & display", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+
+        // Signed In User Profile Card
+        if (!signedInUserEmail.isNullOrBlank()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Signed in as", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(text = signedInUserEmail, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (onSignOutClick != null) {
+                            TextButton(onClick = onSignOutClick) {
+                                Text("Sign Out", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Cloud Backup Status Card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(text = "☁️", fontSize = 24.sp)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(text = "Cloud Backup", fontWeight = FontWeight.Bold)
+                                val statusText = when (syncUiState.status) {
+                                    SyncStatus.SYNCING -> "Syncing your data..."
+                                    SyncStatus.OFFLINE -> "You're offline — changes will sync automatically"
+                                    SyncStatus.PENDING_CHANGES -> "Changes waiting to sync (${syncUiState.pendingChangesCount})"
+                                    SyncStatus.IDLE_NEVER_SYNCED -> "Backup not synced yet"
+                                    SyncStatus.SYNC_SUCCESS -> "Backed up just now"
+                                    else -> "Backup paused"
+                                }
+                                Text(text = statusText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+
+                        Button(
+                            onClick = onSyncNowClick,
+                            enabled = syncUiState.status != SyncStatus.SYNCING,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(if (syncUiState.status == SyncStatus.SYNCING) "Syncing..." else "Sync Now")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Last backup: ${syncUiState.lastSyncFormatted}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    if (!syncUiState.errorMessage.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = syncUiState.errorMessage,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
         }
 
         item {
