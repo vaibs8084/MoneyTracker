@@ -4737,6 +4737,10 @@ fun GoalManagementScreen(
     onGoalClick: (GoalEntity) -> Unit
 ) {
     var showAdd by remember { mutableStateOf(false) }
+    var activeTab by remember { mutableIntStateOf(0) } // 0 = Active, 1 = Completed
+    var deletingGoal by remember { mutableStateOf<GoalEntity?>(null) }
+
+    val completedGoals by viewModel.completedGoals.collectAsState()
 
     if (showAdd) {
         AddGoalDialog(
@@ -4745,6 +4749,26 @@ fun GoalManagementScreen(
             onSave = { name, target, linkedAccountId ->
                 viewModel.addGoal(name, target, linkedAccountId)
                 showAdd = false
+            }
+        )
+    }
+
+    deletingGoal?.let { goal ->
+        AlertDialog(
+            onDismissRequest = { deletingGoal = null },
+            title = { Text("Delete Goal?") },
+            text = { Text("Are you sure you want to delete \"${goal.name}\"? Your account balances and transaction history will remain untouched.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteGoal(goal)
+                        deletingGoal = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingGoal = null }) { Text("Cancel") }
             }
         )
     }
@@ -4776,22 +4800,74 @@ fun GoalManagementScreen(
             modifier = Modifier.fillMaxSize().padding(paddingValues).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            items(goals) { goal ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().clickable { onGoalClick(goal) },
-                    shape = RoundedCornerShape(24.dp)
-                ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
-                        Text(text = goal.name, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text = "Saved: ${formatRupees(goal.manualProgressPaise)}", style = MaterialTheme.typography.bodySmall)
-                            Text(text = "Target: ${formatRupees(goal.targetPaise)}", style = MaterialTheme.typography.bodySmall)
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SelectionChip(
+                        text = "Active (${goals.size})",
+                        selected = activeTab == 0,
+                        onClick = { activeTab = 0 }
+                    )
+                    SelectionChip(
+                        text = "Completed (${completedGoals.size})",
+                        selected = activeTab == 1,
+                        onClick = { activeTab = 1 }
+                    )
+                }
+            }
+
+            val currentList = if (activeTab == 0) goals else completedGoals
+
+            if (currentList.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    ) {
+                        Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = if (activeTab == 0) "No active savings goals." else "No completed savings goals yet.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = if (activeTab == 0) "Tap '+ New Goal' above to start tracking a goal." else "Goals you reach 100% or mark complete will appear here.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        val pct = if (goal.targetPaise > 0) goal.manualProgressPaise.toFloat() / goal.targetPaise.toFloat() else 0f
-                        Box(modifier = Modifier.fillMaxWidth().height(8.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))) {
-                            Box(modifier = Modifier.fillMaxWidth(pct.coerceIn(0f, 1f)).fillMaxHeight().background(MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)))
+                    }
+                }
+            } else {
+                items(currentList) { goal ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable { onGoalClick(goal) },
+                        shape = RoundedCornerShape(24.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(20.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(text = goal.name, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                                if (goal.isCompleted) {
+                                    Surface(shape = RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                                        Text("✓ Completed", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = "Saved: ${formatRupees(goal.manualProgressPaise)}", style = MaterialTheme.typography.bodySmall)
+                                Text(text = "Target: ${formatRupees(goal.targetPaise)}", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            val pct = if (goal.targetPaise > 0) goal.manualProgressPaise.toFloat() / goal.targetPaise.toFloat() else 0f
+                            Box(modifier = Modifier.fillMaxWidth().height(8.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))) {
+                                Box(modifier = Modifier.fillMaxWidth(pct.coerceIn(0f, 1f)).fillMaxHeight().background(if (goal.isCompleted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)))
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = { deletingGoal = goal }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                            }
                         }
                     }
                 }
@@ -4827,10 +4903,13 @@ fun AddGoalDialog(
             }
         },
         confirmButton = {
-            Button(onClick = {
-                val t = target.toLongOrNull() ?: 0L
-                onSave(name, t * 100L, selectedAccountId)
-            }) { Text("Create") }
+            Button(
+                enabled = name.isNotBlank() && (target.trim().toLongOrNull() ?: 0L) > 0L,
+                onClick = {
+                    val t = target.trim().toLongOrNull() ?: 0L
+                    onSave(name.trim(), t * 100L, selectedAccountId)
+                }
+            ) { Text("Create") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -4849,6 +4928,28 @@ fun GoalDetailsScreen(
     onBack: () -> Unit
 ) {
     var contributionAmount by remember { mutableStateOf("") }
+    var deletingGoal by remember { mutableStateOf<GoalEntity?>(null) }
+
+    deletingGoal?.let { targetGoal ->
+        AlertDialog(
+            onDismissRequest = { deletingGoal = null },
+            title = { Text("Delete Goal?") },
+            text = { Text("Are you sure you want to delete \"${targetGoal.name}\"? Your account balances and transaction history will remain untouched.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteGoal(targetGoal)
+                        deletingGoal = null
+                        onBack()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingGoal = null }) { Text("Cancel") }
+            }
+        )
+    }
 
     Scaffold(
         modifier = modifier,
@@ -4876,7 +4977,15 @@ fun GoalDetailsScreen(
                 Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(text = "Goal Progress", style = MaterialTheme.typography.labelMedium)
                     val pct = if (goal.targetPaise > 0) goal.manualProgressPaise.toFloat() / goal.targetPaise.toFloat() else 0f
-                    Text(text = "${(pct * 100).toInt()}%", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+
+                    if (goal.isCompleted) {
+                        Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.padding(vertical = 4.dp)) {
+                            Text("✓ Goal Completed", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                        }
+                    } else {
+                        Text(text = "${(pct * 100).toInt()}%", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+                    }
+
                     Spacer(modifier = Modifier.height(16.dp))
                     Box(modifier = Modifier.fillMaxWidth().height(12.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))) {
                         Box(modifier = Modifier.fillMaxWidth(pct.coerceIn(0f, 1f)).fillMaxHeight().background(MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp)))
@@ -4905,14 +5014,43 @@ fun GoalDetailsScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Button(
+                        enabled = (contributionAmount.trim().toLongOrNull() ?: 0L) > 0L,
                         onClick = {
-                            val amt = contributionAmount.toLongOrNull() ?: 0L
-                            viewModel.updateGoal(goal.copy(manualProgressPaise = goal.manualProgressPaise + (amt * 100L)))
-                            contributionAmount = ""
+                            val amt = contributionAmount.trim().toLongOrNull() ?: 0L
+                            if (amt > 0L) {
+                                val newProgress = goal.manualProgressPaise + (amt * 100L)
+                                val isNowCompleted = newProgress >= goal.targetPaise
+                                viewModel.updateGoal(goal.copy(
+                                    manualProgressPaise = newProgress,
+                                    isCompleted = isNowCompleted
+                                ))
+                                contributionAmount = ""
+                            }
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     ) { Text("Add Progress") }
+                }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        viewModel.updateGoal(goal.copy(isCompleted = !goal.isCompleted))
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(if (goal.isCompleted) "Reopen Goal" else "Mark as Completed")
+                }
+
+                Button(
+                    onClick = { deletingGoal = goal },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete Goal")
                 }
             }
         }

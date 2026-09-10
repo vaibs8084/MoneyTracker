@@ -37,6 +37,28 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
     val goals: StateFlow<List<GoalEntity>> = repository.getGoals()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val completedGoals: StateFlow<List<GoalEntity>> = repository.getCompletedGoals()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    init {
+        viewModelScope.launch {
+            combine(goals, allAccounts) { activeGoals, accs ->
+                activeGoals.filter { !it.isCompleted }.forEach { goal ->
+                    val currentProgress = if (goal.linkedAccountId != null) {
+                        accs.find { it.id == goal.linkedAccountId }?.let { acc ->
+                            repository.getAccountBalance(acc)
+                        } ?: goal.manualProgressPaise
+                    } else {
+                        goal.manualProgressPaise
+                    }
+                    if (goal.targetPaise > 0L && currentProgress >= goal.targetPaise) {
+                        repository.updateGoal(goal.copy(isCompleted = true))
+                    }
+                }
+            }.collect()
+        }
+    }
+
     val smartRules: StateFlow<List<RuleWithTags>> = repository.getSmartRules()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -282,6 +304,12 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
     fun updateGoal(goal: GoalEntity) {
         viewModelScope.launch {
             repository.updateGoal(goal)
+        }
+    }
+
+    fun deleteGoal(goal: GoalEntity) {
+        viewModelScope.launch {
+            repository.deleteGoal(goal)
         }
     }
 

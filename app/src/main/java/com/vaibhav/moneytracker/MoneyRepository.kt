@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.map
 import androidx.room.withTransaction
 import com.vaibhav.moneytracker.capture.CapturedTransactionEntity
 import com.vaibhav.moneytracker.cloud.SyncLogEntity
+import kotlinx.coroutines.flow.flow
 import java.util.Calendar
 
 class MoneyRepository(private val db: MoneyTrackerDatabase) {
@@ -17,6 +18,10 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
     fun getAccounts(): Flow<List<AccountEntity>> = db.accountDao().getAllFlow()
 
     fun getAllAccounts(): Flow<List<AccountEntity>> = db.accountDao().getAllIncludingInactiveFlow()
+
+    suspend fun getAccountBalance(account: AccountEntity): Long {
+        return FinancialEngine.calculateAccountBalance(db, account)
+    }
 
     @Volatile
     var isSyncSuppressed: Boolean = false
@@ -117,6 +122,10 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
     fun getBudgets(): Flow<List<BudgetEntity>> = db.budgetDao().getAllActiveFlow()
 
     fun getGoals(): Flow<List<GoalEntity>> = db.goalDao().getAllActiveFlow()
+
+    fun getCompletedGoals(): Flow<List<GoalEntity>> = flow {
+        emit(db.goalDao().getCompleted())
+    }
 
     fun getSmartRules(): Flow<List<RuleWithTags>> = db.categorizationRuleDao().getAllActiveWithTagsFlow()
 
