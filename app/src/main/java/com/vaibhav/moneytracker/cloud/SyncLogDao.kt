@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SyncLogDao {
@@ -14,6 +15,9 @@ interface SyncLogDao {
 
     @Query("SELECT * FROM sync_logs ORDER BY id ASC")
     suspend fun getAll(): List<SyncLogEntity>
+
+    @Query("SELECT * FROM sync_logs ORDER BY id ASC")
+    fun getAllFlow(): Flow<List<SyncLogEntity>>
 
     @Query("SELECT * FROM sync_logs WHERE entityType = :entityType AND entityId = :entityId LIMIT 1")
     suspend fun getByEntity(entityType: String, entityId: Long): SyncLogEntity?

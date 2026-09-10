@@ -26,6 +26,7 @@ fun SettingsScreen(
     accounts: List<AccountEntity>,
     categories: List<CategoryEntity>,
     onNavigateToProfile: () -> Unit,
+    onNavigateToDataManagement: () -> Unit,
     onNavigateToImport: () -> Unit,
     onNavigateToCategories: () -> Unit,
     onNavigateToTags: () -> Unit,
@@ -348,6 +349,10 @@ fun SettingsScreen(
 
                         TextButton(onClick = onNavigateToProfile, modifier = Modifier.fillMaxWidth()) {
                             Text("👤 Profile & Cloud Backup Controls")
+                        }
+
+                        TextButton(onClick = onNavigateToDataManagement, modifier = Modifier.fillMaxWidth()) {
+                            Text("📊 Data Management (Export & Reset)")
                         }
 
                         TextButton(onClick = onNavigateToCategories, modifier = Modifier.fillMaxWidth()) {

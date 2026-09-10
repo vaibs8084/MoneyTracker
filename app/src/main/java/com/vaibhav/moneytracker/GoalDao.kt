@@ -26,4 +26,7 @@ interface GoalDao {
 
     @Query("SELECT * FROM goals WHERE isCompleted = 1")
     suspend fun getCompleted(): List<GoalEntity>
+
+    @Query("DELETE FROM goals")
+    suspend fun deleteAll()
 }

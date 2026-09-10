@@ -2,8 +2,11 @@ package com.vaibhav.moneytracker.cloud
 
 import android.util.Log
 import com.vaibhav.moneytracker.*
+import com.vaibhav.moneytracker.auth.AuthPreferenceManager
 import com.vaibhav.moneytracker.auth.UserIdentity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 data class SyncResult(
@@ -17,7 +20,8 @@ class SyncEngine(
     private val database: MoneyTrackerDatabase,
     private val repository: MoneyRepository,
     private val sheetsRepository: GoogleSheetsRepository,
-    private val cloudManager: CloudSpreadsheetManager
+    private val cloudManager: CloudSpreadsheetManager,
+    private val preferenceManager: AuthPreferenceManager
 ) {
 
     companion object {
@@ -38,13 +42,20 @@ class SyncEngine(
         )
     }
 
+    private val syncMutex = Mutex()
+
     /**
      * Entry point for synchronization.
      * Evaluates local vs cloud state and chooses First Backup, New Device Restore, or Incremental Sync.
      */
     suspend fun performSync(user: UserIdentity): SyncResult = withContext(Dispatchers.IO) {
-        Log.d(TAG, "Starting sync for user: ${user.email}")
+        if (!syncMutex.tryLock()) {
+            Log.d(TAG, "Sync already in progress; skipping concurrent request")
+            return@withContext SyncResult(isSuccess = true, uploadedCount = 0, downloadedCount = 0)
+        }
         try {
+            Log.d(TAG, "Starting sync for user: ${user.email}")
+
             val provision = cloudManager.discoverOrCreateSpreadsheet(user)
             val spreadsheetId = provision.spreadsheetId
             if (spreadsheetId.isNullOrBlank()) {
@@ -87,7 +98,9 @@ class SyncEngine(
 
         } catch (e: Exception) {
             Log.e(TAG, "Sync exception: ${e.localizedMessage}", e)
-            return@withContext SyncResult(isSuccess = false, errorMessage = "Sync failed: ${e.localizedMessage ?: "Unknown error"}")
+            SyncResult(isSuccess = false, errorMessage = "Sync failed: ${e.localizedMessage ?: "Unknown error"}")
+        } finally {
+            syncMutex.unlock()
         }
     }
 
@@ -253,6 +266,10 @@ class SyncEngine(
             var uploadedCount = 0
             var downloadedCount = 0
 
+            val mutableCloudData = cloudData.mapValues { entry ->
+                entry.value.map { row -> row.toMutableList() }.toMutableList()
+            }.toMutableMap()
+
             // 1. Upload local changes queued in sync_logs
             val logs = database.syncLogDao().getAll()
             Log.d(TAG, "Draining ${logs.size} pending sync logs")
@@ -271,18 +288,26 @@ class SyncEngine(
                     val isDelete = log.action == "DELETE"
 
                     if (rowData != null || isDelete) {
-                        val cloudRows = cloudData[tabName] ?: emptyList()
+                        val cloudRows = mutableCloudData.getOrPut(tabName) { mutableListOf() }
                         val rowIndex = cloudRows.indexOfFirst { it.firstOrNull() == log.entityId.toString() }
 
                         val writeResult = if (rowIndex >= 0) {
-                            // Row exists in cloud -> Update existing row safely by stable ID
+                            // Row exists in cloud -> Update existing row in-place by stable ID
                             val rowNum = rowIndex + 2 // +2 for 1-based index and header row
                             val range = "'$tabName'!A$rowNum:Z$rowNum"
                             val payload = rowData ?: listOf(log.entityId.toString(), "", "", "", "", "", "", "", "", "", "", "TRUE", log.timestampMs.toString())
-                            sheetsRepository.updateRange(spreadsheetId, range, listOf(payload))
+                            val res = sheetsRepository.updateRange(spreadsheetId, range, listOf(payload))
+                            if (res is SheetsResult.Success) {
+                                cloudRows[rowIndex] = payload.map { it.toString() }.toMutableList()
+                            }
+                            res
                         } else if (rowData != null) {
-                            // Row does not exist in cloud -> Append new row
-                            sheetsRepository.appendRows(spreadsheetId, tabName, listOf(rowData))
+                            // Row does not exist in cloud -> Append new row and record in mutableCloudData
+                            val res = sheetsRepository.appendRows(spreadsheetId, tabName, listOf(rowData))
+                            if (res is SheetsResult.Success) {
+                                cloudRows.add(rowData.map { it.toString() }.toMutableList())
+                            }
+                            res
                         } else {
                             SheetsResult.Success(0)
                         }
@@ -308,7 +333,7 @@ class SyncEngine(
 
             // 2. Download cloud updates
             repository.withSyncSuppressed {
-                val cloudTxRows = cloudData["Transactions"] ?: emptyList()
+                val cloudTxRows = mutableCloudData["Transactions"] ?: emptyList()
                 val existingLocalTxs = database.transactionDao().getAll().associateBy { it.id }
 
                 cloudTxRows.forEach { row ->
@@ -339,6 +364,35 @@ class SyncEngine(
         } catch (e: Exception) {
             Log.e(TAG, "Incremental sync exception: ${e.localizedMessage}", e)
             SyncResult(isSuccess = false, errorMessage = "Incremental sync error: ${e.localizedMessage}")
+        }
+    }
+
+    suspend fun performStartFresh(user: UserIdentity): SyncResult = withContext(Dispatchers.IO) {
+        Log.d(TAG, "Starting 'Start Fresh' complete reset for user: ${user.email}")
+        try {
+            // 1. Clear local Room database tables & sync_logs queue
+            repository.resetLocalDatabase()
+
+            // 2. Clear cloud backup spreadsheet data rows across all 12 tabs
+            val spreadsheetId = user.spreadsheetId
+            if (!spreadsheetId.isNullOrBlank()) {
+                val allTabs = CloudSpreadsheetManager.REQUIRED_TABS
+                for (tabName in allTabs) {
+                    val clearRes = sheetsRepository.clearTabRows(spreadsheetId, tabName)
+                    if (clearRes !is SheetsResult.Success) {
+                        Log.e(TAG, "Failed to clear cloud tab $tabName during Start Fresh")
+                    }
+                }
+            }
+
+            // 3. Reset last sync timestamp in preferences
+            preferenceManager.setLastSyncTimestamp(0L)
+
+            Log.d(TAG, "'Start Fresh' complete local + cloud reset finished successfully")
+            SyncResult(isSuccess = true, uploadedCount = 0, downloadedCount = 0)
+        } catch (e: Exception) {
+            Log.e(TAG, "Start Fresh exception: ${e.localizedMessage}", e)
+            SyncResult(isSuccess = false, errorMessage = "Start Fresh failed: ${e.localizedMessage}")
         }
     }
 

@@ -32,4 +32,7 @@ interface SubscriptionDao {
 
     @Query("SELECT * FROM subscriptions WHERE name = :name LIMIT 1")
     suspend fun getByName(name: String): SubscriptionEntity?
+
+    @Query("DELETE FROM subscriptions")
+    suspend fun deleteAll()
 }

@@ -35,4 +35,10 @@ interface CategorizationRuleDao {
 
     @Query("DELETE FROM rule_tag_cross_ref WHERE ruleId = :ruleId")
     suspend fun deleteTagsForRule(ruleId: Long)
+
+    @Query("DELETE FROM categorization_rules")
+    suspend fun deleteAll()
+
+    @Query("DELETE FROM rule_tag_cross_ref")
+    suspend fun deleteAllTagRefs()
 }

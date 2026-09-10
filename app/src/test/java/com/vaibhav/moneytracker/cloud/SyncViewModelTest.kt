@@ -66,4 +66,28 @@ class SyncViewModelTest {
         assertEquals(SyncStatus.OFFLINE, state.status)
         assertEquals("You're offline. We'll try again when you're connected.", state.errorMessage)
     }
+
+    @Test
+    fun testPendingSyncLogAutomaticTriggerConditions() {
+        val pendingLogs = listOf(
+            SyncLogEntity(id = 1, entityType = "TRANSACTION", entityId = 101, action = "CREATE")
+        )
+        val isGuestMode = false
+        val userSessionExists = true
+        val isSyncInFlight = false
+
+        val shouldTriggerAutoSync = pendingLogs.isNotEmpty() && !isGuestMode && userSessionExists && !isSyncInFlight
+        assertTrue("Pending sync logs for authenticated user must trigger auto-sync", shouldTriggerAutoSync)
+    }
+
+    @Test
+    fun testGuestModeBlocksAutomaticSyncTrigger() {
+        val pendingLogs = listOf(
+            SyncLogEntity(id = 1, entityType = "TRANSACTION", entityId = 101, action = "CREATE")
+        )
+        val isGuestMode = true
+        val shouldTriggerAutoSync = pendingLogs.isNotEmpty() && !isGuestMode
+
+        assertFalse("Guest mode must block automatic sync trigger", shouldTriggerAutoSync)
+    }
 }

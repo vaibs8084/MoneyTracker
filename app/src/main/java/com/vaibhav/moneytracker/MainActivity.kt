@@ -84,6 +84,7 @@ import com.vaibhav.moneytracker.cloud.SyncViewModel
 import com.vaibhav.moneytracker.preferences.ThemeMode
 import com.vaibhav.moneytracker.preferences.UserPreferencesManager
 import com.vaibhav.moneytracker.ui.CaptureInboxScreen
+import com.vaibhav.moneytracker.ui.DataManagementScreen
 import com.vaibhav.moneytracker.ui.OnboardingScreen
 import com.vaibhav.moneytracker.ui.SettingsScreen
 import com.vaibhav.moneytracker.ui.theme.MoneyTrackerTheme
@@ -109,7 +110,7 @@ class MainActivity : ComponentActivity() {
         val authManager = AuthManager(this)
         val cloudSpreadsheetManager = CloudSpreadsheetManager(this)
         val sheetsRepository = GoogleSheetsRepository(this)
-        val syncEngine = SyncEngine(database, repository, sheetsRepository, cloudSpreadsheetManager)
+        val syncEngine = SyncEngine(database, repository, sheetsRepository, cloudSpreadsheetManager, authManager.preferenceManager)
         val syncViewModel = SyncViewModel(database, syncEngine, authManager.preferenceManager)
         val onboardingViewModel = OnboardingViewModel(authManager, cloudSpreadsheetManager)
         val userPreferencesManager = UserPreferencesManager(this)
@@ -866,10 +867,27 @@ fun MoneyTrackerApp(
                         accounts = accounts,
                         categories = categories,
                         onNavigateToProfile = { selectedTab = 15 },
+                        onNavigateToDataManagement = { selectedTab = 17 },
                         onNavigateToImport = { selectedTab = 13 },
                         onNavigateToCategories = { selectedTab = 5 },
                         onNavigateToTags = { selectedTab = 6 },
                         onBack = { selectedTab = 3 }
+                    )
+                }
+
+                17 -> {
+                    DataManagementScreen(
+                        modifier = Modifier.padding(paddingValues),
+                        viewModel = viewModel,
+                        syncViewModel = syncViewModel,
+                        user = onboardingState.user,
+                        transactions = transactions,
+                        accounts = accounts,
+                        categories = categories,
+                        tags = tags,
+                        pendingSyncLogsCount = syncUiState.pendingChangesCount,
+                        onNavigateToImport = { selectedTab = 13 },
+                        onBack = { selectedTab = 16 }
                     )
                 }
             }

@@ -77,4 +77,7 @@ interface AccountDao {
     suspend fun deactivate(
         id: Long
     )
+
+    @Query("DELETE FROM accounts")
+    suspend fun deleteAll()
 }

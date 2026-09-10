@@ -37,4 +37,7 @@ interface CapturedTransactionDao {
 
     @Query("SELECT * FROM captured_transactions WHERE referenceNumber = :refNumber AND status = 'PENDING' LIMIT 1")
     suspend fun getByReferenceNumber(refNumber: String): CapturedTransactionEntity?
+
+    @Query("DELETE FROM captured_transactions")
+    suspend fun deleteAll()
 }

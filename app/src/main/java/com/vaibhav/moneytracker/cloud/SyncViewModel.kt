@@ -6,9 +6,11 @@ import com.vaibhav.moneytracker.MoneyTrackerDatabase
 import com.vaibhav.moneytracker.auth.AuthPreferenceManager
 import com.vaibhav.moneytracker.auth.UserIdentity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -26,6 +28,24 @@ class SyncViewModel(
 
     init {
         refreshSyncStatusState()
+        observePendingSyncLogs()
+    }
+
+    fun isSyncInFlight(): Boolean = isSyncInFlight
+
+    @OptIn(FlowPreview::class)
+    private fun observePendingSyncLogs() {
+        viewModelScope.launch {
+            database.syncLogDao().getAllFlow()
+                .debounce(1500L)
+                .collect { logs ->
+                    val user = preferenceManager.getUserSession()
+                    val isGuest = preferenceManager.isGuestMode()
+                    if (logs.isNotEmpty() && !isGuest && user != null && !isSyncInFlight) {
+                        performSyncNow(user)
+                    }
+                }
+        }
     }
 
     fun refreshSyncStatusState() {
@@ -88,6 +108,41 @@ class SyncViewModel(
                     _syncState.value = _syncState.value.copy(
                         status = SyncStatus.SYNC_ERROR,
                         errorMessage = "Backup couldn't be completed. Please try again."
+                    )
+                }
+            } finally {
+                isSyncInFlight = false
+            }
+        }
+    }
+
+    fun performStartFresh(user: UserIdentity, onComplete: () -> Unit) {
+        if (isSyncInFlight) return
+        isSyncInFlight = true
+
+        _syncState.value = _syncState.value.copy(
+            status = SyncStatus.SYNCING,
+            errorMessage = null
+        )
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val result = syncEngine.performStartFresh(user)
+                withContext(Dispatchers.Main) {
+                    _syncState.value = SyncUiState(
+                        status = SyncStatus.IDLE_NEVER_SYNCED,
+                        lastSyncFormatted = "Never",
+                        lastSyncTimestampMs = 0L,
+                        pendingChangesCount = 0,
+                        errorMessage = null
+                    )
+                    onComplete()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _syncState.value = _syncState.value.copy(
+                        status = SyncStatus.SYNC_ERROR,
+                        errorMessage = "Start Fresh reset failed. Please try again."
                     )
                 }
             } finally {

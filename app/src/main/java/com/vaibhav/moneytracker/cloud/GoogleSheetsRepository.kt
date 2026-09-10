@@ -9,6 +9,7 @@ import com.google.api.services.drive.DriveScopes
 import com.google.api.services.sheets.v4.Sheets
 import com.google.api.services.sheets.v4.SheetsScopes
 import com.google.api.services.sheets.v4.model.BatchUpdateSpreadsheetRequest
+import com.google.api.services.sheets.v4.model.ClearValuesRequest
 import com.google.api.services.sheets.v4.model.Request
 import com.google.api.services.sheets.v4.model.ValueRange
 import com.vaibhav.moneytracker.auth.AuthPreferenceManager
@@ -183,6 +184,22 @@ class GoogleSheetsRepository(private val context: Context) {
             handleGoogleJsonException(e)
         } catch (e: Exception) {
             SheetsResult.Error(SheetsErrorType.NETWORK_ERROR, "Network error updating spreadsheet: ${e.localizedMessage}", e)
+        }
+    }
+
+    suspend fun clearTabRows(spreadsheetId: String, tabName: String): SheetsResult<Boolean> = withContext(Dispatchers.IO) {
+        val email = getAuthorizedUserEmail()
+            ?: return@withContext SheetsResult.Error(SheetsErrorType.AUTHENTICATION_ERROR, "No authenticated user session found.")
+
+        try {
+            val sheetsService = getSheetsService(email)
+            val range = "'$tabName'!A2:Z10000"
+            sheetsService.spreadsheets().values().clear(spreadsheetId, range, ClearValuesRequest()).execute()
+            SheetsResult.Success(true)
+        } catch (e: GoogleJsonResponseException) {
+            handleGoogleJsonException(e)
+        } catch (e: Exception) {
+            SheetsResult.Error(SheetsErrorType.NETWORK_ERROR, "Network error clearing tab '$tabName': ${e.localizedMessage}", e)
         }
     }
 

@@ -29,4 +29,7 @@ interface TagDao {
 
     @Query("SELECT * FROM tags WHERE name = :name LIMIT 1")
     suspend fun getByName(name: String): TagEntity?
+
+    @Query("DELETE FROM tags")
+    suspend fun deleteAll()
 }

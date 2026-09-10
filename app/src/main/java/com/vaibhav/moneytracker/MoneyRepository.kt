@@ -447,6 +447,24 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
         }
     }
 
+    suspend fun resetLocalDatabase() {
+        db.withTransaction {
+            db.transactionDao().deleteAll()
+            db.capturedTransactionDao().deleteAll()
+            db.subscriptionDao().deleteAll()
+            db.budgetDao().deleteAll()
+            db.goalDao().deleteAll()
+            db.categorizationRuleDao().deleteAllTagRefs()
+            db.categorizationRuleDao().deleteAll()
+            db.tagDao().deleteAll()
+            db.accountDao().deleteAll()
+            db.categoryDao().deleteAll()
+            db.syncLogDao().deleteAll()
+        }
+        ensureDefaultAccounts(db)
+        ensureCategories(db)
+    }
+
     /**
      * Imports a batch of confirmed candidate transactions atomically.
      * All transactions in [items] confirmed by the user are inserted in a single Room transaction.

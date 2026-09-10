@@ -313,6 +313,15 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
         }
     }
 
+    fun resetLocalDatabase(onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.resetLocalDatabase()
+            withContext(Dispatchers.Main) {
+                onComplete()
+            }
+        }
+    }
+
     // Smart Rule methods
     fun addSmartRule(pattern: String, categoryId: Long?, tagIds: List<Long>) {
         viewModelScope.launch {
