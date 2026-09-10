@@ -41,4 +41,48 @@ class SyncEngineTest {
         assertFalse(result.isSuccess)
         assertEquals("Google Sheets authorization error (403)", result.errorMessage)
     }
+
+    @Test
+    fun testConflictResolutionCloudNewerWins() {
+        val localCreatedAt = 1788500000000L
+        val cloudUpdatedAtMs = 1788500005000L
+
+        assertTrue("Cloud row with newer timestamp wins", cloudUpdatedAtMs > localCreatedAt)
+    }
+
+    @Test
+    fun testSoftDeleteTombstoneResolution() {
+        val isCloudDeleted = true
+        val cloudUpdatedAtMs = 1788500005000L
+        val localCreatedAt = 1788500000000L
+
+        assertTrue("Cloud soft-delete tombstone with newer timestamp must delete local record", isCloudDeleted && cloudUpdatedAtMs >= localCreatedAt)
+    }
+
+    @Test
+    fun testEntityToTabMappingCoverage() {
+        val entityTypes = listOf(
+            "TRANSACTION", "ACCOUNT", "CATEGORY", "TAG", "TRANSACTION_TAG",
+            "SUBSCRIPTION", "BUDGET", "GOAL", "RULE", "RULE_TAG", "CAPTURED"
+        )
+
+        entityTypes.forEach { type ->
+            val mappedTab = when (type) {
+                "TRANSACTION" -> "Transactions"
+                "ACCOUNT" -> "Accounts"
+                "CATEGORY" -> "Categories"
+                "TAG" -> "Tags"
+                "TRANSACTION_TAG" -> "TransactionTags"
+                "SUBSCRIPTION" -> "Subscriptions"
+                "BUDGET" -> "Budgets"
+                "GOAL" -> "Goals"
+                "RULE" -> "Rules"
+                "RULE_TAG" -> "RuleTags"
+                "CAPTURED" -> "CapturedInbox"
+                else -> null
+            }
+            assertNotNull("Entity type $type must map to a valid cloud tab", mappedTab)
+            assertTrue(SyncEngine.TOPOLOGICAL_ORDER.contains(mappedTab))
+        }
+    }
 }

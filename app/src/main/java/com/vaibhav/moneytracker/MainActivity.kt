@@ -4204,10 +4204,33 @@ fun SubscriptionManagementScreen(
     onBack: () -> Unit,
     onRefreshSuggestions: () -> Unit
 ) {
+    var showAddDialog by remember { mutableStateOf(false) }
     var confirmingSuggestion by remember { mutableStateOf<SubscriptionEntity?>(null) }
     var editingSubscription by remember { mutableStateOf<SubscriptionEntity?>(null) }
+    var deletingSubscription by remember { mutableStateOf<SubscriptionEntity?>(null) }
     val ignoredSuggestionNames = remember { mutableStateListOf<String>() }
     val visibleSuggestions = suggestions.filterNot { it.name in ignoredSuggestionNames }
+
+    if (showAddDialog) {
+        SubscriptionEditorDialog(
+            title = "Add Subscription",
+            initial = SubscriptionEntity(
+                name = "",
+                amountPaise = 0L,
+                cadence = "MONTHLY",
+                nextDate = System.currentTimeMillis() + (30L * 24 * 60 * 60 * 1000L),
+                isConfirmed = true,
+                isActive = true
+            ),
+            accounts = accounts,
+            categories = categories,
+            onDismiss = { showAddDialog = false },
+            onSave = { newSub ->
+                viewModel.addSubscription(newSub)
+                showAddDialog = false
+            }
+        )
+    }
 
     confirmingSuggestion?.let { suggestion ->
         SubscriptionEditorDialog(
@@ -4238,6 +4261,26 @@ fun SubscriptionManagementScreen(
         )
     }
 
+    deletingSubscription?.let { sub ->
+        AlertDialog(
+            onDismissRequest = { deletingSubscription = null },
+            title = { Text("Delete Subscription") },
+            text = { Text("Are you sure you want to delete \"${sub.name}\"? Previous recorded payments will remain in your history.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteSubscription(sub)
+                        deletingSubscription = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingSubscription = null }) { Text("Cancel") }
+            }
+        )
+    }
+
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -4253,6 +4296,14 @@ fun SubscriptionManagementScreen(
                     modifier = Modifier.clickable { onBack() }.padding(end = 12.dp)
                 )
                 Text(text = "Recurring & Subscriptions", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            }
+        },
+        floatingActionButton = {
+            Button(
+                onClick = { showAddDialog = true },
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text("+ Add Subscription")
             }
         }
     ) { paddingValues ->
@@ -4295,11 +4346,23 @@ fun SubscriptionManagementScreen(
             }
 
             item {
-                Text(text = "Confirmed", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(text = "Confirmed Subscriptions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             }
 
             if (confirmed.isEmpty()) {
-                item { Text("No confirmed subscriptions yet.", style = MaterialTheme.typography.bodySmall) }
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    ) {
+                        Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("No confirmed subscriptions yet.", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("Tap '+ Add Subscription' above to create a recurring bill.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
             } else {
                 items(confirmed) { sub ->
                     Card(
@@ -4312,21 +4375,48 @@ fun SubscriptionManagementScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
-                                Text(text = sub.name, fontWeight = FontWeight.Bold)
-                                Text(text = "Next: ${formatDate(sub.nextDate)}", style = MaterialTheme.typography.labelSmall)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(text = sub.name, fontWeight = FontWeight.Bold)
+                                    if (!sub.isActive) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = MaterialTheme.colorScheme.secondaryContainer
+                                        ) {
+                                            Text(
+                                                text = "Paused",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Text(text = "Cadence: ${sub.cadence} • Next: ${formatDate(sub.nextDate)}", style = MaterialTheme.typography.labelSmall)
                             }
                             Text(text = formatRupees(sub.amountPaise), fontWeight = FontWeight.Bold)
                         }
                         Row(
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Button(onClick = { viewModel.recordSubscriptionPayment(sub) }) {
-                                Text("Record Payment")
+                            if (sub.isActive) {
+                                Button(onClick = { viewModel.recordSubscriptionPayment(sub) }) {
+                                    Text("Record Payment")
+                                }
                             }
                             OutlinedButton(onClick = { editingSubscription = sub }) { Text("Edit") }
-                            TextButton(onClick = { viewModel.deactivateSubscription(sub) }) {
-                                Text("Deactivate", color = MaterialTheme.colorScheme.error)
+                            TextButton(
+                                onClick = {
+                                    viewModel.updateSubscription(sub.copy(isActive = !sub.isActive))
+                                }
+                            ) {
+                                Text(if (sub.isActive) "Pause" else "Reactivate")
+                            }
+                            TextButton(
+                                onClick = { deletingSubscription = sub }
+                            ) {
+                                Text("Delete", color = MaterialTheme.colorScheme.error)
                             }
                         }
                     }

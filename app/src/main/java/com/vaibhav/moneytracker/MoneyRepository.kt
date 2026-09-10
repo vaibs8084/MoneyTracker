@@ -4,6 +4,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import androidx.room.withTransaction
 import com.vaibhav.moneytracker.capture.CapturedTransactionEntity
+import com.vaibhav.moneytracker.cloud.SyncLogEntity
+import java.util.Calendar
 
 class MoneyRepository(private val db: MoneyTrackerDatabase) {
 
@@ -34,6 +36,19 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
         }
     }
 
+    private suspend fun logSync(entityType: String, entityId: Long, action: String, secondaryId: Long? = null) {
+        if (isSyncSuppressed) return
+        db.syncLogDao().insertOrCoalesce(
+            SyncLogEntity(
+                entityType = entityType,
+                entityId = entityId,
+                secondaryId = secondaryId,
+                action = action,
+                timestampMs = System.currentTimeMillis()
+            )
+        )
+    }
+
     // Captured Transactions (Capture Inbox)
     fun getPendingCapturesFlow(): Flow<List<CapturedTransactionEntity>> =
         db.capturedTransactionDao().getPendingCapturesFlow()
@@ -51,7 +66,7 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
                 db.categoryDao().getAll().firstOrNull { it.id == id }
             }
 
-            db.transactionDao().insert(
+            val newTxId = db.transactionDao().insert(
                 TransactionEntity(
                     title = captured.title,
                     category = category?.name ?: "General",
@@ -66,15 +81,23 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
             )
 
             db.capturedTransactionDao().updateStatus(captured.id, "APPROVED")
+            logSync("TRANSACTION", newTxId, "CREATE")
+            logSync("CAPTURED", captured.id, "UPDATE")
         }
     }
 
     suspend fun rejectCapturedTransaction(captured: CapturedTransactionEntity) {
-        db.capturedTransactionDao().updateStatus(captured.id, "REJECTED")
+        db.withTransaction {
+            db.capturedTransactionDao().updateStatus(captured.id, "REJECTED")
+            logSync("CAPTURED", captured.id, "UPDATE")
+        }
     }
 
     suspend fun updateCapturedTransaction(captured: CapturedTransactionEntity) {
-        db.capturedTransactionDao().update(captured)
+        db.withTransaction {
+            db.capturedTransactionDao().update(captured)
+            logSync("CAPTURED", captured.id, "UPDATE")
+        }
     }
 
     suspend fun getTransactionsInRange(accountId: Long?, startDate: Long, endDate: Long): List<TransactionEntity> {
@@ -102,27 +125,13 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
             val id = db.transactionDao().insert(transaction)
             tags.distinctBy { it.id }.forEach { tag ->
                 db.transactionDao().insertTagRef(TransactionTagCrossRef(id, tag.id))
+                logSync("TRANSACTION_TAG", tag.id, "CREATE", secondaryId = id)
             }
+            logSync("TRANSACTION", id, "CREATE")
             id
         }
     }
 
-    /**
-     * Atomically checks for a potential duplicate and, if none exists, inserts
-     * the transaction — all within a single SQLite write transaction.
-     *
-     * Room's [db.withTransaction] acquires the database write lock for the entire
-     * block. Concurrent callers are serialised by SQLite: the second caller's
-     * duplicate-check read sees the first caller's committed row, preventing a
-     * double-insert race condition.
-     *
-     * Returns [InsertTransactionResult.Inserted] on success, or
-     * [InsertTransactionResult.DuplicateDetected] when a matching transaction
-     * already exists on the same calendar day.
-     *
-     * Transfer transactions (where [TransactionEntity.accountId] is null) bypass
-     * the duplicate check and are always inserted.
-     */
     suspend fun insertTransactionChecked(
         transaction: TransactionEntity,
         tags: List<TagEntity>
@@ -148,7 +157,9 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
             val id = db.transactionDao().insert(transaction)
             tags.distinctBy { it.id }.forEach { tag ->
                 db.transactionDao().insertTagRef(TransactionTagCrossRef(id, tag.id))
+                logSync("TRANSACTION_TAG", tag.id, "CREATE", secondaryId = id)
             }
+            logSync("TRANSACTION", id, "CREATE")
             InsertTransactionResult.Inserted(id)
         }
     }
@@ -159,27 +170,20 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
             db.transactionDao().deleteTagsForTransaction(transaction.id)
             tags.distinctBy { it.id }.forEach { tag ->
                 db.transactionDao().insertTagRef(TransactionTagCrossRef(transaction.id, tag.id))
+                logSync("TRANSACTION_TAG", tag.id, "CREATE", secondaryId = transaction.id)
             }
+            logSync("TRANSACTION", transaction.id, "UPDATE")
         }
     }
 
     suspend fun deleteTransaction(transaction: TransactionEntity) {
-        db.transactionDao().delete(transaction)
+        db.withTransaction {
+            db.transactionDao().deleteTagsForTransaction(transaction.id)
+            db.transactionDao().delete(transaction)
+            logSync("TRANSACTION", transaction.id, "DELETE")
+        }
     }
 
-    /**
-     * Checks whether a near-identical transaction already exists for the same
-     * calendar day as [transaction].
-     *
-     * Matching criteria: same title, same amountPaise, same account (by accountId
-     * FK or by legacy account name), recorded on the same calendar day.
-     *
-     * Returns the matching [TransactionEntity] when a potential duplicate is found,
-     * or null when no match exists.
-     *
-     * Transfer transactions are excluded because their accountId is always null;
-     * the from/to accounts are tracked separately for them.
-     */
     suspend fun findPotentialDuplicate(transaction: TransactionEntity): TransactionEntity? {
         val accountId = transaction.accountId ?: return null
         val dayStart = calendarDayStart(transaction.createdAt)
@@ -195,12 +199,12 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
     }
 
     private fun calendarDayStart(timestampMs: Long): Long {
-        val cal = java.util.Calendar.getInstance()
+        val cal = Calendar.getInstance()
         cal.timeInMillis = timestampMs
-        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        cal.set(java.util.Calendar.MINUTE, 0)
-        cal.set(java.util.Calendar.SECOND, 0)
-        cal.set(java.util.Calendar.MILLISECOND, 0)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
         return cal.timeInMillis
     }
 
@@ -209,10 +213,20 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
         db.withTransaction {
             db.transactionDao().deleteTagsForTransactions(ids)
             db.transactionDao().deleteByIds(ids)
+            ids.forEach { id ->
+                logSync("TRANSACTION", id, "DELETE")
+            }
         }
     }
 
-    suspend fun insertAccount(account: AccountEntity) = db.accountDao().insert(account)
+    suspend fun insertAccount(account: AccountEntity): Long {
+        return db.withTransaction {
+            val id = db.accountDao().insert(account)
+            logSync("ACCOUNT", id, "CREATE")
+            id
+        }
+    }
+
     suspend fun updateAccount(account: AccountEntity) {
         db.withTransaction {
             val previous = db.accountDao().getById(account.id)
@@ -220,29 +234,140 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
             if (previous != null && previous.name != account.name) {
                 db.transactionDao().renameLegacyAccountName(previous.name, account.name)
             }
+            logSync("ACCOUNT", account.id, "UPDATE")
         }
     }
-    suspend fun deactivateAccount(id: Long) = db.accountDao().deactivate(id)
 
-    suspend fun insertCategory(category: CategoryEntity) = db.categoryDao().insert(category)
-    suspend fun updateCategory(category: CategoryEntity) = db.categoryDao().update(category)
+    suspend fun deactivateAccount(id: Long) {
+        db.withTransaction {
+            db.accountDao().deactivate(id)
+            logSync("ACCOUNT", id, "UPDATE")
+        }
+    }
 
-    suspend fun insertTag(tag: TagEntity) = db.tagDao().insert(tag)
-    suspend fun updateTag(tag: TagEntity) = db.tagDao().update(tag)
+    suspend fun insertCategory(category: CategoryEntity): Long {
+        return db.withTransaction {
+            val id = db.categoryDao().insert(category)
+            logSync("CATEGORY", id, "CREATE")
+            id
+        }
+    }
 
-    suspend fun insertBudget(budget: BudgetEntity) = db.budgetDao().insert(budget)
-    suspend fun updateBudget(budget: BudgetEntity) = db.budgetDao().update(budget)
+    suspend fun updateCategory(category: CategoryEntity) {
+        db.withTransaction {
+            db.categoryDao().update(category)
+            logSync("CATEGORY", category.id, "UPDATE")
+        }
+    }
 
-    suspend fun insertGoal(goal: GoalEntity) = db.goalDao().insert(goal)
-    suspend fun updateGoal(goal: GoalEntity) = db.goalDao().update(goal)
+    suspend fun deleteCategory(category: CategoryEntity) {
+        db.withTransaction {
+            db.categoryDao().delete(category)
+            logSync("CATEGORY", category.id, "DELETE")
+        }
+    }
 
-    suspend fun confirmSubscription(suggestion: SubscriptionEntity): Long =
-        db.subscriptionDao().insert(suggestion.copy(id = 0, isConfirmed = true, isActive = true))
+    suspend fun insertTag(tag: TagEntity): Long {
+        return db.withTransaction {
+            val id = db.tagDao().insert(tag)
+            logSync("TAG", id, "CREATE")
+            id
+        }
+    }
 
-    suspend fun updateSubscription(subscription: SubscriptionEntity) = db.subscriptionDao().update(subscription)
+    suspend fun updateTag(tag: TagEntity) {
+        db.withTransaction {
+            db.tagDao().update(tag)
+            logSync("TAG", tag.id, "UPDATE")
+        }
+    }
+
+    suspend fun deleteTag(tag: TagEntity) {
+        db.withTransaction {
+            db.tagDao().delete(tag)
+            logSync("TAG", tag.id, "DELETE")
+        }
+    }
+
+    suspend fun insertBudget(budget: BudgetEntity): Long {
+        return db.withTransaction {
+            val id = db.budgetDao().insert(budget)
+            logSync("BUDGET", id, "CREATE")
+            id
+        }
+    }
+
+    suspend fun updateBudget(budget: BudgetEntity) {
+        db.withTransaction {
+            db.budgetDao().update(budget)
+            logSync("BUDGET", budget.id, "UPDATE")
+        }
+    }
+
+    suspend fun deleteBudget(budget: BudgetEntity) {
+        db.withTransaction {
+            db.budgetDao().delete(budget)
+            logSync("BUDGET", budget.id, "DELETE")
+        }
+    }
+
+    suspend fun insertGoal(goal: GoalEntity): Long {
+        return db.withTransaction {
+            val id = db.goalDao().insert(goal)
+            logSync("GOAL", id, "CREATE")
+            id
+        }
+    }
+
+    suspend fun updateGoal(goal: GoalEntity) {
+        db.withTransaction {
+            db.goalDao().update(goal)
+            logSync("GOAL", goal.id, "UPDATE")
+        }
+    }
+
+    suspend fun deleteGoal(goal: GoalEntity) {
+        db.withTransaction {
+            db.goalDao().delete(goal)
+            logSync("GOAL", goal.id, "DELETE")
+        }
+    }
+
+    suspend fun insertSubscription(subscription: SubscriptionEntity): Long {
+        return db.withTransaction {
+            val id = db.subscriptionDao().insert(subscription.copy(isConfirmed = true))
+            logSync("SUBSCRIPTION", id, "CREATE")
+            id
+        }
+    }
+
+    suspend fun confirmSubscription(suggestion: SubscriptionEntity): Long {
+        return db.withTransaction {
+            val id = db.subscriptionDao().insert(suggestion.copy(id = 0, isConfirmed = true, isActive = true))
+            logSync("SUBSCRIPTION", id, "CREATE")
+            id
+        }
+    }
+
+    suspend fun updateSubscription(subscription: SubscriptionEntity) {
+        db.withTransaction {
+            db.subscriptionDao().update(subscription)
+            logSync("SUBSCRIPTION", subscription.id, "UPDATE")
+        }
+    }
 
     suspend fun deactivateSubscription(subscription: SubscriptionEntity) {
-        db.subscriptionDao().update(subscription.copy(isActive = false))
+        db.withTransaction {
+            db.subscriptionDao().update(subscription.copy(isActive = false))
+            logSync("SUBSCRIPTION", subscription.id, "UPDATE")
+        }
+    }
+
+    suspend fun deleteSubscription(subscription: SubscriptionEntity) {
+        db.withTransaction {
+            db.subscriptionDao().delete(subscription)
+            logSync("SUBSCRIPTION", subscription.id, "DELETE")
+        }
     }
 
     /** Records one real payment and advances its schedule atomically. */
@@ -275,6 +400,8 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
                     )
                 )
             )
+            logSync("TRANSACTION", transactionId, "CREATE")
+            logSync("SUBSCRIPTION", subscription.id, "UPDATE")
             transactionId
         }
     }
@@ -284,8 +411,30 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
             val ruleId = db.categorizationRuleDao().insert(rule)
             tagIds.distinct().forEach { tagId ->
                 db.categorizationRuleDao().insertTagRef(RuleTagCrossRef(ruleId, tagId))
+                logSync("RULE_TAG", tagId, "CREATE", secondaryId = ruleId)
             }
+            logSync("RULE", ruleId, "CREATE")
             ruleId
+        }
+    }
+
+    suspend fun updateRule(rule: CategorizationRuleEntity, tagIds: List<Long>) {
+        db.withTransaction {
+            db.categorizationRuleDao().update(rule)
+            db.categorizationRuleDao().deleteTagsForRule(rule.id)
+            tagIds.distinct().forEach { tagId ->
+                db.categorizationRuleDao().insertTagRef(RuleTagCrossRef(rule.id, tagId))
+                logSync("RULE_TAG", tagId, "CREATE", secondaryId = rule.id)
+            }
+            logSync("RULE", rule.id, "UPDATE")
+        }
+    }
+
+    suspend fun deleteRule(rule: CategorizationRuleEntity) {
+        db.withTransaction {
+            db.categorizationRuleDao().deleteTagsForRule(rule.id)
+            db.categorizationRuleDao().delete(rule)
+            logSync("RULE", rule.id, "DELETE")
         }
     }
 
@@ -301,13 +450,13 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
             var importedCount = 0
             val existing = db.transactionDao().getAll()
 
-            val calendar = java.util.Calendar.getInstance()
+            val calendar = Calendar.getInstance()
             fun getDayStart(timestamp: Long): Long {
                 calendar.timeInMillis = timestamp
-                calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-                calendar.set(java.util.Calendar.MINUTE, 0)
-                calendar.set(java.util.Calendar.SECOND, 0)
-                calendar.set(java.util.Calendar.MILLISECOND, 0)
+                calendar.set(Calendar.HOUR_OF_DAY, 0)
+                calendar.set(Calendar.MINUTE, 0)
+                calendar.set(Calendar.SECOND, 0)
+                calendar.set(Calendar.MILLISECOND, 0)
                 return calendar.timeInMillis
             }
 
@@ -326,7 +475,9 @@ class MoneyRepository(private val db: MoneyTrackerDatabase) {
                 val id = db.transactionDao().insert(transaction)
                 tags.distinctBy { it.id }.forEach { tag ->
                     db.transactionDao().insertTagRef(TransactionTagCrossRef(id, tag.id))
+                    logSync("TRANSACTION_TAG", tag.id, "CREATE", secondaryId = id)
                 }
+                logSync("TRANSACTION", id, "CREATE")
                 importedCount++
             }
 

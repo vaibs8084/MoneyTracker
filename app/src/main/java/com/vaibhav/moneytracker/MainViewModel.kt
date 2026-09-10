@@ -218,6 +218,12 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
     }
 
     // Subscription methods
+    fun addSubscription(subscription: SubscriptionEntity) {
+        viewModelScope.launch {
+            repository.insertSubscription(subscription)
+        }
+    }
+
     fun confirmSubscription(suggestion: SubscriptionEntity) {
         viewModelScope.launch { repository.confirmSubscription(suggestion) }
     }
@@ -230,6 +236,10 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
 
     fun deactivateSubscription(subscription: SubscriptionEntity) {
         viewModelScope.launch { repository.deactivateSubscription(subscription) }
+    }
+
+    fun deleteSubscription(subscription: SubscriptionEntity) {
+        viewModelScope.launch { repository.deleteSubscription(subscription) }
     }
 
     fun recordSubscriptionPayment(subscription: SubscriptionEntity) {
