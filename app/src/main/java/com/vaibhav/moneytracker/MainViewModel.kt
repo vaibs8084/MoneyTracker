@@ -253,6 +253,18 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
         }
     }
 
+    fun updateBudget(budget: BudgetEntity) {
+        viewModelScope.launch {
+            repository.updateBudget(budget)
+        }
+    }
+
+    fun deleteBudget(budget: BudgetEntity) {
+        viewModelScope.launch {
+            repository.deleteBudget(budget)
+        }
+    }
+
     // Goal methods
     fun addGoal(name: String, target: Long, linkedAccountId: Long?) {
         viewModelScope.launch {

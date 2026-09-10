@@ -63,6 +63,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -761,6 +762,7 @@ fun MoneyTrackerApp(
                         viewModel = viewModel,
                         budgets = activeBudgets,
                         categories = categories,
+                        transactions = transactions,
                         onBack = { selectedTab = 3 }
                     )
                 }
@@ -4501,9 +4503,12 @@ fun BudgetManagementScreen(
     viewModel: MainViewModel,
     budgets: List<BudgetEntity>,
     categories: List<CategoryEntity>,
+    transactions: List<TransactionUiModel>,
     onBack: () -> Unit
 ) {
     var showAdd by remember { mutableStateOf(false) }
+    var editingBudget by remember { mutableStateOf<BudgetEntity?>(null) }
+    var deletingBudget by remember { mutableStateOf<BudgetEntity?>(null) }
 
     if (showAdd) {
         AddBudgetDialog(
@@ -4512,6 +4517,39 @@ fun BudgetManagementScreen(
             onSave = { categoryId, limit ->
                 viewModel.addBudget(categoryId, limit)
                 showAdd = false
+            }
+        )
+    }
+
+    editingBudget?.let { budget ->
+        EditBudgetDialog(
+            budget = budget,
+            categories = categories,
+            onDismiss = { editingBudget = null },
+            onSave = { updated ->
+                viewModel.updateBudget(updated)
+                editingBudget = null
+            }
+        )
+    }
+
+    deletingBudget?.let { budget ->
+        val categoryName = categories.find { it.id == budget.categoryId }?.name ?: "this category"
+        AlertDialog(
+            onDismissRequest = { deletingBudget = null },
+            title = { Text("Delete Budget?") },
+            text = { Text("Are you sure you want to delete the monthly budget for \"$categoryName\"? Your transaction history will remain untouched.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteBudget(budget)
+                        deletingBudget = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingBudget = null }) { Text("Cancel") }
             }
         )
     }
@@ -4543,20 +4581,67 @@ fun BudgetManagementScreen(
             modifier = Modifier.fillMaxSize().padding(paddingValues).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            items(budgets) { budget ->
-                val category = categories.find { it.id == budget.categoryId }
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp)
-                ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text = category?.name ?: "Unknown", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                            Text(text = formatRupees(budget.limitPaise), fontWeight = FontWeight.SemiBold)
+            if (budgets.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    ) {
+                        Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("No monthly budgets set yet.", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("Tap '+ Add Budget' above to set a spending limit for a category.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        // Note: Usage will be calculated in Dashboard for now, here we just show limit
-                        Text(text = "Limit per month", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            } else {
+                items(budgets) { budget ->
+                    val category = categories.find { it.id == budget.categoryId }
+                    val usage = IntelligenceEngine.calculateBudgetUsage(transactions, budget)
+                    val pct = if (budget.limitPaise > 0) usage.toFloat() / budget.limitPaise.toFloat() else 0f
+                    val isOverBudget = usage >= budget.limitPaise
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(20.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(20.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(text = category?.name ?: "Unknown", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                                Text(text = "${formatRupees(usage)} / ${formatRupees(budget.limitPaise)}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            val barColor = when {
+                                pct > 1f -> MaterialTheme.colorScheme.error
+                                pct > 0.8f -> Color(0xFFFBC02D) // Amber
+                                else -> MaterialTheme.colorScheme.primary
+                            }
+
+                            Box(modifier = Modifier.fillMaxWidth().height(8.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))) {
+                                Box(modifier = Modifier.fillMaxWidth(pct.coerceIn(0f, 1f)).fillMaxHeight().background(barColor, RoundedCornerShape(4.dp)))
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = if (isOverBudget) "Over budget by ${formatRupees(usage - budget.limitPaise)}" else "Remaining: ${formatRupees(budget.limitPaise - usage)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isOverBudget) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(text = "${(pct * 100).toInt()}% used", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { editingBudget = budget }) { Text("Edit") }
+                                TextButton(onClick = { deletingBudget = budget }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                            }
+                        }
                     }
                 }
             }
@@ -4588,10 +4673,50 @@ fun AddBudgetDialog(
             }
         },
         confirmButton = {
-            Button(onClick = {
-                val l = limit.toLongOrNull() ?: 0L
-                onSave(selectedCategoryId, l * 100L)
-            }) { Text("Save") }
+            Button(
+                enabled = selectedCategoryId > 0L && (limit.trim().toLongOrNull() ?: 0L) > 0L,
+                onClick = {
+                    val l = limit.trim().toLongOrNull() ?: 0L
+                    onSave(selectedCategoryId, l * 100L)
+                }
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+fun EditBudgetDialog(
+    budget: BudgetEntity,
+    categories: List<CategoryEntity>,
+    onDismiss: () -> Unit,
+    onSave: (BudgetEntity) -> Unit
+) {
+    var selectedCategoryId by remember(budget.id) { mutableStateOf(budget.categoryId) }
+    var limit by remember(budget.id) { mutableStateOf((budget.limitPaise / 100L).toString()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit Category Budget") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Select Category", style = MaterialTheme.typography.labelMedium)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(categories) { cat ->
+                        SelectionChip(text = cat.name, selected = selectedCategoryId == cat.id, onClick = { selectedCategoryId = cat.id })
+                    }
+                }
+                OutlinedTextField(value = limit, onValueChange = { limit = it }, label = { Text("Monthly Limit") })
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = selectedCategoryId > 0L && (limit.trim().toLongOrNull() ?: 0L) > 0L,
+                onClick = {
+                    val l = limit.trim().toLongOrNull() ?: 0L
+                    onSave(budget.copy(categoryId = selectedCategoryId, limitPaise = l * 100L))
+                }
+            ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
