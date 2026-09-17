@@ -25,6 +25,7 @@ import com.vaibhav.moneytracker.*
 import com.vaibhav.moneytracker.capture.CapturedTransactionEntity
 import com.vaibhav.moneytracker.csv.DuplicateConfidence
 import com.vaibhav.moneytracker.csv.DuplicateDetector
+import com.vaibhav.moneytracker.intelligence.MerchantNormalizer
 
 @Composable
 fun CaptureInboxScreen(
@@ -225,6 +226,16 @@ fun CaptureInboxScreen(
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
+
+                            val normalized = MerchantNormalizer.normalize(candidate.title)
+                            if (normalized.isNotBlank() && !normalized.equals(candidate.title, ignoreCase = true)) {
+                                Text(
+                                    text = "Merchant: $normalized",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
 
                             Spacer(modifier = Modifier.height(4.dp))
 

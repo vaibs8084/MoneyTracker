@@ -81,6 +81,8 @@ import com.vaibhav.moneytracker.cloud.SyncEngine
 import com.vaibhav.moneytracker.cloud.SyncStatus
 import com.vaibhav.moneytracker.cloud.SyncUiState
 import com.vaibhav.moneytracker.cloud.SyncViewModel
+import com.vaibhav.moneytracker.intelligence.IntelligenceConfidence
+import com.vaibhav.moneytracker.intelligence.TransactionIntelligence
 import com.vaibhav.moneytracker.preferences.ThemeMode
 import com.vaibhav.moneytracker.preferences.UserPreferencesManager
 import com.vaibhav.moneytracker.ui.CaptureInboxScreen
@@ -1659,17 +1661,22 @@ fun AddTransactionScreen(
 
     var matchedSubscription by remember { mutableStateOf<SubscriptionEntity?>(null) }
 
+    val intelligenceSuggestion = remember(title, rules) {
+        if (title.isNotBlank()) {
+            TransactionIntelligence.analyze(title, rules, emptyList(), categories)
+        } else null
+    }
+
     // Rule Matching & Subscription Suggestion
     LaunchedEffect(title, amount) {
         if (title.isNotBlank()) {
-            // Match Rules
             if (selectedCategory == null && selectedTags.isEmpty()) {
-                val (ruleCatId, ruleTags) = IntelligenceEngine.matchRules(title, rules)
-                if (ruleCatId != null) {
-                    selectedCategory = categories.find { it.id == ruleCatId }
+                val suggestion = TransactionIntelligence.analyze(title, rules, emptyList(), categories)
+                if (suggestion.categoryId != null) {
+                    selectedCategory = categories.find { it.id == suggestion.categoryId }
                 }
-                if (ruleTags.isNotEmpty()) {
-                    selectedTags = ruleTags
+                if (suggestion.tags.isNotEmpty()) {
+                    selectedTags = suggestion.tags
                 }
             }
 
@@ -1774,6 +1781,30 @@ fun AddTransactionScreen(
                     label = { Text("Transaction Title") },
                     singleLine = true
                 )
+            }
+
+            if (intelligenceSuggestion != null && intelligenceSuggestion.confidence != IntelligenceConfidence.NONE) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+                    ) {
+                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("💡 ", fontSize = 16.sp)
+                            Column {
+                                Text(
+                                    text = "Merchant: ${intelligenceSuggestion.normalizedMerchant}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                intelligenceSuggestion.explanation?.let { exp ->
+                                    Text(text = exp, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             if (matchedSubscription != null) {
