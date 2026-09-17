@@ -3,6 +3,19 @@ package com.vaibhav.moneytracker
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.vaibhav.moneytracker.capture.CapturedTransactionEntity
+import com.vaibhav.moneytracker.intelligence.CashFlowHealth
+import com.vaibhav.moneytracker.intelligence.CashFlowSummary
+import com.vaibhav.moneytracker.intelligence.ConsolidatedIntelligenceOutput
+import com.vaibhav.moneytracker.intelligence.FinancialHealthReport
+import com.vaibhav.moneytracker.intelligence.FinancialIntelligenceEngine
+import com.vaibhav.moneytracker.intelligence.MoneyTrackerIntelligenceSystem
+import com.vaibhav.moneytracker.intelligence.PeriodComparison
+import com.vaibhav.moneytracker.intelligence.RecurringBurdenHealth
+import com.vaibhav.moneytracker.intelligence.RecurringCommitmentSummary
+import com.vaibhav.moneytracker.intelligence.SavingsHealth
+import com.vaibhav.moneytracker.intelligence.SavingsRate
+import com.vaibhav.moneytracker.intelligence.SpendingAnalysis
+import com.vaibhav.moneytracker.intelligence.StructuredFinancialInsight
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -82,6 +95,61 @@ class MainViewModel(private val repository: MoneyRepository) : ViewModel() {
     ) { txs, period ->
         IntelligenceEngine.generateInsights(txs, period)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val structuredInsights: StateFlow<List<StructuredFinancialInsight>> = combine(
+        transactions,
+        allAccounts,
+        categories,
+        budgets,
+        selectedPeriod
+    ) { txs, accs, cats, bdgs, period ->
+        FinancialIntelligenceEngine.generateStructuredInsights(
+            transactions = txs,
+            accounts = accs,
+            categories = cats,
+            budgets = bdgs,
+            goals = goals.value,
+            subscriptions = subscriptions.value,
+            period = period
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val consolidatedIntelligence: StateFlow<ConsolidatedIntelligenceOutput> = combine(
+        transactions,
+        allAccounts,
+        categories,
+        budgets,
+        selectedPeriod
+    ) { txs, accs, cats, bdgs, period ->
+        MoneyTrackerIntelligenceSystem.computeConsolidatedIntelligence(
+            transactions = txs,
+            accounts = accs,
+            categories = cats,
+            budgets = bdgs,
+            goals = goals.value,
+            subscriptions = subscriptions.value,
+            period = period
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ConsolidatedIntelligenceOutput(
+        cashFlow = CashFlowSummary(0L, 0L, 0L, 0, 0),
+        savingsRate = SavingsRate(0.0, 0L, true),
+        spendingAnalysis = SpendingAnalysis(emptyList(), emptyList(), 0L),
+        periodComparison = PeriodComparison(0L, 0L, 0L, 0.0),
+        recurringSummary = RecurringCommitmentSummary(0L, 0, 0.0),
+        budgetSignals = emptyList(),
+        healthReport = FinancialHealthReport(
+            cashFlowHealth = CashFlowHealth.BALANCED,
+            savingsHealth = SavingsHealth.NEEDS_ATTENTION,
+            recurringBurdenHealth = RecurringBurdenHealth.LOW,
+            overBudgetCount = 0,
+            approachingBudgetCount = 0,
+            totalActiveGoalsCount = 0,
+            completedGoalsCount = 0
+        ),
+        structuredInsights = emptyList(),
+        alerts = emptyList()
+    )
+    )
 
     fun selectPeriod(period: DashboardPeriod) {
         _selectedPeriod.value = period
